@@ -1,0 +1,292 @@
+<h2>Which lattice reads as "deep field" rather than CAD viewport?</h2>
+<p class="subtitle">All four use the same mechanic you approved: decade levels (1&nbsp;m, 10&nbsp;m, 100&nbsp;m&nbsp;…), each fading in as its on-screen spacing grows and out as it gets too coarse, so zooming continuously hands off between them. Only the <em>look</em> of the lines differs. Every panel is auto-zooming through ~2.5 decades on the same clock, so you can compare the handoff directly.</p>
+
+<div style="display:flex;gap:10px;align-items:center;margin:0 0 18px 0;flex-wrap:wrap">
+  <span class="label" style="margin:0">accent&nbsp;color</span>
+  <span class="sw" data-c="#ec3013" style="width:26px;height:26px;background:#ec3013;border-radius:4px;cursor:pointer;display:inline-block;outline:2px solid #fff"></span>
+  <span class="sw" data-c="#4de1e8" style="width:26px;height:26px;background:#4de1e8;border-radius:4px;cursor:pointer;display:inline-block"></span>
+  <span class="sw" data-c="#d8a12a" style="width:26px;height:26px;background:#d8a12a;border-radius:4px;cursor:pointer;display:inline-block"></span>
+  <span class="sw" data-c="#5fd39a" style="width:26px;height:26px;background:#5fd39a;border-radius:4px;cursor:pointer;display:inline-block"></span>
+  <span class="subtitle" style="margin:0 0 0 10px">— this is the single <code>background.accent_color</code> knob, driving the depth glow and the level markers together.</span>
+</div>
+
+<div class="cards">
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:0"><canvas id="cvA" width="760" height="440" style="width:100%;display:block"></canvas></div>
+    <div class="card-body">
+      <h3>A — Mockup baseline</h3>
+      <p>Exactly the design mockup: uniform faint lines edge to edge, accent cross-ticks at every 3rd vertex of the dominant level. Honest port, but the even weight across the whole frame is the part that reads "drafting sheet".</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:0"><canvas id="cvB" width="760" height="440" style="width:100%;display:block"></canvas></div>
+    <div class="card-body">
+      <h3>B — Depth-cued lattice <span style="opacity:.6;font-weight:400">(my pick)</span></h3>
+      <p>Same lattice, three changes: lines <strong>dissolve toward the frame edges</strong> so it never looks like a bounded sheet; the three line families carry <strong>slightly different weights</strong> (1 / .7 / .7) so the field has grain instead of perfect isotropy; and vertices of the dominant level get a <strong>soft accent node</strong> instead of a hard cross.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:0"><canvas id="cvC" width="760" height="440" style="width:100%;display:block"></canvas></div>
+    <div class="card-body">
+      <h3>C — Node field only</h3>
+      <p>No continuous lines at all — only the lattice <em>vertices</em>, as dots whose size and brightness track the level. Subdivision reads as the field densifying. Furthest from a CAD viewport, and the cheapest to draw; but the grid stops working as a scale reference because you can't trace a cell edge.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="d" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:0"><canvas id="cvD" width="760" height="440" style="width:100%;display:block"></canvas></div>
+    <div class="card-body">
+      <h3>D — Range rings</h3>
+      <p>Concentric decade rings plus faint spokes, centred on the current reference body — how range rings actually work on an instrument. Unmistakably orbital. Risk: it competes visually with the orbit lines and the prediction conic, which are also curves, and it needs a reference body to have a centre at all.</p>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var accent = '#ec3013';
+  document.querySelectorAll('.sw').forEach(function (s) {
+    s.addEventListener('click', function (e) {
+      e.stopPropagation();
+      accent = s.dataset.c;
+      document.querySelectorAll('.sw').forEach(function (o) { o.style.outline = 'none'; });
+      s.style.outline = '2px solid #fff';
+    });
+  });
+
+  function rgb(hex) {
+    var h = hex.replace('#', '');
+    var n = parseInt(h, 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  }
+  function ra(hex, a) { return 'rgba(' + rgb(hex).join(',') + ',' + a.toFixed(4) + ')'; }
+  function sstep(e0, e1, x) { var t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0))); return t * t * (3 - 2 * t); }
+
+  // deterministic star field, same LCG the mockup uses
+  function field(n, seed) {
+    var out = [], s = seed;
+    var rnd = function () { s = (s * 1103515245 + 12345) & 0x7fffffff; return s / 0x7fffffff; };
+    for (var i = 0; i < n; i++) out.push({ x: rnd(), y: rnd(), r: 0.4 + rnd() * 1.5, a: 0.25 + rnd() * 0.75, p: 0.05 + rnd() * 0.5, tw: rnd() * 6.28 });
+    return out;
+  }
+  var stars = field(300, 90210);
+
+  var S3 = Math.sqrt(3) / 2;
+  var NRM = [[0, 1], [-S3, 0.5], [S3, 0.5]];
+  var WEIGHT = [1.0, 0.7, 0.7];
+
+  function ground(ctx, w, h, panel) {
+    var g = ctx.createLinearGradient(0, 0, 0, h);
+    g.addColorStop(0, '#23211f'); g.addColorStop(0.55, '#1b1a19'); g.addColorStop(1, '#141312');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+    var gl = ctx.createRadialGradient(w * .72, h * .28, 0, w * .72, h * .28, Math.max(w, h) * .7);
+    gl.addColorStop(0, ra(accent, 0.10)); gl.addColorStop(0.45, ra(accent, 0.028)); gl.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = gl; ctx.fillRect(0, 0, w, h);
+  }
+
+  function drawStars(ctx, w, h, t, ox, oy) {
+    // fraction-of-on-screen-pan model: pan already in px, damped by star_motion_scale
+    for (var i = 0; i < stars.length; i++) {
+      var s = stars[i];
+      var dx = ((s.x * w - ox * s.p) % w + w) % w;
+      var dy = ((s.y * h - oy * s.p) % h + h) % h;
+      var tw = 0.72 + 0.28 * Math.sin(t * 0.9 + s.tw);
+      var r = s.r * (0.85 + s.p * 0.5);
+      ctx.fillStyle = 'rgba(240,238,236,' + (s.a * 0.55 * tw).toFixed(3) + ')';
+      ctx.fillRect(dx - r / 2, dy - r / 2, r, r);
+    }
+  }
+
+  // decade levels: world spacing 10^k metres
+  function levels(p0, w, h) {
+    var out = [];
+    for (var k = -30; k <= 30; k++) {
+      var sp = Math.pow(10, k) * p0;
+      if (sp < 9 || sp > 4000) continue;
+      var a = sstep(10, 55, sp) * (1 - sstep(600, 2600, sp));
+      if (a <= 0.005) continue;
+      out.push({ k: k, ws: Math.pow(10, k), sp: sp, a: a });
+    }
+    return out;
+  }
+
+  function lattice(ctx, w, h, p0, ox, oy, lv, opts) {
+    var cx = w / 2, cy = h / 2, L = w + h;
+    var corners = [[0, 0], [w, 0], [0, h], [w, h]].map(function (c) { return [(c[0] - cx) / p0 + ox, (c[1] - cy) / p0 + oy]; });
+    for (var li = 0; li < lv.length; li++) {
+      var lev = lv[li], ws = lev.ws, a = lev.a;
+      for (var ni = 0; ni < NRM.length; ni++) {
+        var n = NRM[ni];
+        var dmin = Infinity, dmax = -Infinity;
+        for (var ci = 0; ci < 4; ci++) { var d = corners[ci][0] * n[0] + corners[ci][1] * n[1]; if (d < dmin) dmin = d; if (d > dmax) dmax = d; }
+        var i0 = Math.floor(dmin / ws), i1 = Math.ceil(dmax / ws);
+        if (i1 - i0 > 700) continue;
+        var wgt = opts.grain ? WEIGHT[ni] : 1.0;
+        var u = Math.log2(lev.sp);
+        ctx.lineWidth = Math.min(1.5, Math.max(0.6, 0.55 + (u - 5) * 0.12));
+        var dx = -n[1] * L, dy = n[0] * L;
+        for (var i = i0; i <= i1; i++) {
+          var sx = (n[0] * i * ws - ox) * p0 + cx, sy = (n[1] * i * ws - oy) * p0 + cy;
+          if (opts.dissolve) {
+            // fade each span by how far its midpoint sits from the screen centre
+            var mx = sx - cx, my = sy - cy;
+            var perp = Math.sqrt(mx * mx + my * my) / Math.sqrt(cx * cx + cy * cy);
+            var fall = 1 - sstep(0.35, 1.05, perp);
+            if (fall <= 0.02) continue;
+            ctx.strokeStyle = 'rgba(206,218,226,' + (a * 0.10 * wgt * fall).toFixed(4) + ')';
+          } else {
+            ctx.strokeStyle = 'rgba(206,218,226,' + (a * 0.075 * wgt).toFixed(4) + ')';
+          }
+          ctx.beginPath();
+          ctx.moveTo(sx - dx, sy - dy); ctx.lineTo(sx + dx, sy + dy);
+          ctx.stroke();
+        }
+      }
+    }
+  }
+
+  function vertices(ctx, w, h, p0, ox, oy, lev, cb) {
+    var cx = w / 2, cy = h / 2, ws = lev.ws;
+    var ux = ws / (2 * S3), uy = ws;
+    var jr = Math.ceil(w / (ux * p0)) + Math.ceil(h / (uy * p0)) + 4;
+    if (jr > 260) return;
+    var j0 = Math.round((ox * S3 * 2 - oy) / (2 * ws));
+    var k0 = Math.round((ox * S3 * 2 + oy) / (2 * ws));
+    for (var j = j0 - jr; j <= j0 + jr; j++) {
+      for (var m = k0 - jr; m <= k0 + jr; m++) {
+        var wx = (m - j) * ux, wy = (j + m) * uy * 0.5;
+        var sx = (wx - ox) * p0 + cx, sy = (wy - oy) * p0 + cy;
+        if (sx < -8 || sx > w + 8 || sy < -8 || sy > h + 8) continue;
+        cb(sx, sy, j, m);
+      }
+    }
+  }
+
+  function panelA(ctx, w, h, t, p0, ox, oy) {
+    var lv = levels(p0, w, h);
+    lattice(ctx, w, h, p0, ox, oy, lv, { grain: false, dissolve: false });
+    for (var i = 0; i < lv.length; i++) {
+      var lev = lv[i];
+      if (lev.a < 0.7 || lev.sp < 130) continue;
+      ctx.strokeStyle = ra(accent, lev.a * 0.45); ctx.lineWidth = 1; ctx.beginPath();
+      vertices(ctx, w, h, p0, ox, oy, lev, function (sx, sy, j, m) {
+        if (((j % 3) + 3) % 3 || ((m % 3) + 3) % 3) return;
+        sx = Math.round(sx) + .5; sy = Math.round(sy) + .5;
+        ctx.moveTo(sx - 4, sy); ctx.lineTo(sx + 4, sy);
+        ctx.moveTo(sx, sy - 4); ctx.lineTo(sx, sy + 4);
+      });
+      ctx.stroke();
+    }
+  }
+
+  function panelB(ctx, w, h, t, p0, ox, oy) {
+    var lv = levels(p0, w, h);
+    lattice(ctx, w, h, p0, ox, oy, lv, { grain: true, dissolve: true });
+    var cx = w / 2, cy = h / 2, diag = Math.sqrt(cx * cx + cy * cy);
+    for (var i = 0; i < lv.length; i++) {
+      var lev = lv[i];
+      if (lev.a < 0.55 || lev.sp < 90) continue;
+      vertices(ctx, w, h, p0, ox, oy, lev, function (sx, sy) {
+        var mx = sx - cx, my = sy - cy;
+        var fall = 1 - sstep(0.30, 1.0, Math.sqrt(mx * mx + my * my) / diag);
+        if (fall <= 0.03) return;
+        var rad = 2.6 + lev.a * 1.4;
+        var g = ctx.createRadialGradient(sx, sy, 0, sx, sy, rad);
+        g.addColorStop(0, ra(accent, lev.a * 0.55 * fall));
+        g.addColorStop(1, ra(accent, 0));
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(sx, sy, rad, 0, 6.2832); ctx.fill();
+      });
+    }
+  }
+
+  function panelC(ctx, w, h, t, p0, ox, oy) {
+    var lv = levels(p0, w, h), cx = w / 2, cy = h / 2, diag = Math.sqrt(cx * cx + cy * cy);
+    for (var i = 0; i < lv.length; i++) {
+      var lev = lv[i];
+      if (lev.sp < 16) continue;
+      var dominant = lev.a > 0.6;
+      vertices(ctx, w, h, p0, ox, oy, lev, function (sx, sy) {
+        var mx = sx - cx, my = sy - cy;
+        var fall = 1 - sstep(0.30, 1.05, Math.sqrt(mx * mx + my * my) / diag);
+        if (fall <= 0.03) return;
+        var rad = (dominant ? 1.6 : 0.9) + lev.a * 0.9;
+        if (dominant) {
+          var g = ctx.createRadialGradient(sx, sy, 0, sx, sy, rad * 2.2);
+          g.addColorStop(0, ra(accent, lev.a * 0.5 * fall));
+          g.addColorStop(1, ra(accent, 0));
+          ctx.fillStyle = g;
+          ctx.beginPath(); ctx.arc(sx, sy, rad * 2.2, 0, 6.2832); ctx.fill();
+        } else {
+          ctx.fillStyle = 'rgba(206,218,226,' + (lev.a * 0.30 * fall).toFixed(4) + ')';
+          ctx.beginPath(); ctx.arc(sx, sy, rad, 0, 6.2832); ctx.fill();
+        }
+      });
+    }
+  }
+
+  function panelD(ctx, w, h, t, p0, ox, oy) {
+    var lv = levels(p0, w, h);
+    // centre = the reference body, parked slightly off screen-centre here
+    var cx = w / 2 - ox * p0, cy = h / 2 - oy * p0;
+    var maxr = Math.sqrt(w * w + h * h);
+    for (var i = 0; i < lv.length; i++) {
+      var lev = lv[i], ws = lev.ws, a = lev.a;
+      ctx.lineWidth = 0.9;
+      for (var m = 1; m <= 9; m++) {
+        var r = m * ws * p0;
+        if (r < 12 || r > maxr) continue;
+        var major = (m === 1);
+        ctx.strokeStyle = major ? ra(accent, a * 0.30) : 'rgba(206,218,226,' + (a * 0.075).toFixed(4) + ')';
+        ctx.beginPath(); ctx.arc(cx, cy, r, 0, 6.2832); ctx.stroke();
+      }
+      if (a > 0.6) {
+        ctx.strokeStyle = 'rgba(206,218,226,' + (a * 0.06).toFixed(4) + ')';
+        ctx.beginPath();
+        for (var s = 0; s < 12; s++) {
+          var ang = s * Math.PI / 6;
+          ctx.moveTo(cx + Math.cos(ang) * ws * p0 * 0.9, cy + Math.sin(ang) * ws * p0 * 0.9);
+          ctx.lineTo(cx + Math.cos(ang) * maxr, cy + Math.sin(ang) * maxr);
+        }
+        ctx.stroke();
+      }
+    }
+  }
+
+  function haze(ctx, w, h) {
+    ctx.fillStyle = 'rgba(255,255,255,0.012)';
+    for (var y = 0; y < h; y += 3) ctx.fillRect(0, y, w, 1);
+    var v = ctx.createRadialGradient(w / 2, h * .45, Math.min(w, h) * .3, w / 2, h * .45, Math.max(w, h) * .78);
+    v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(0,0,0,0.55)');
+    ctx.fillStyle = v; ctx.fillRect(0, 0, w, h);
+  }
+
+  var panels = [
+    { id: 'cvA', fn: panelA }, { id: 'cvB', fn: panelB },
+    { id: 'cvC', fn: panelC }, { id: 'cvD', fn: panelD }
+  ].map(function (p) {
+    var cv = document.getElementById(p.id);
+    return cv ? { cv: cv, ctx: cv.getContext('2d'), fn: p.fn } : null;
+  }).filter(Boolean);
+
+  var t0 = performance.now();
+  function loop() {
+    requestAnimationFrame(loop);
+    var t = (performance.now() - t0) / 1000;
+    // one shared auto-zoom over ~2.5 decades + slow drift, so panels stay comparable
+    var z = Math.sin(t * 0.20) * 2.9;
+    var p0 = 70 * Math.pow(10, z * 0.42);
+    var ox = Math.cos(t * 0.13) * 260 / p0, oy = t * 9 / p0;
+    for (var i = 0; i < panels.length; i++) {
+      var p = panels[i], w = p.cv.width, h = p.cv.height;
+      ground(p.ctx, w, h);
+      drawStars(p.ctx, w, h, t, ox * p0 * 0.35, oy * p0 * 0.35);
+      p.fn(p.ctx, w, h, t, p0, ox, oy);
+      haze(p.ctx, w, h);
+    }
+  }
+  loop();
+})();
+</script>

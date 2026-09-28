@@ -1,0 +1,74 @@
+"""Kopftest fuer test.horizon_targets -- die reine laengen-regel des
+vorhersage-horizonts. Modulebene, damit sie hier messbar ist statt
+nachgebaut (dieselbe begruendung wie bei predictor_horizon_lengths).
+
+Aufruf: python tests/horizon_targets_test.py
+"""
+
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+try:
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+except Exception:
+    pass
+
+from test import horizon_targets, predictor_horizon_lengths
+
+FAILURES = []
+
+
+def check(condition, label, detail=''):
+    if condition:
+        print(f"  ok   {label}{(' -- ' + detail) if detail else ''}")
+    else:
+        FAILURES.append(f"{label}: {detail}")
+        print(f"  FAIL {label} -- {detail}")
+
+
+BASE = 1.0e10          # 10000 punkte x 1e6 m abstand
+MAXP = 40000
+SPACING = 1.0e6
+CEIL = 4.0
+
+# --- 1. ohne grabbing exakt wie predictor_horizon_lengths -------------
+print("1. deckungsgleich ohne grabbing")
+for mult in (0.25, 1.0, 2.0, 4.0):
+    for warp in (1.0, 4.0, 64.0):
+        a = horizon_targets(BASE, mult, warp, MAXP, SPACING)
+        b = predictor_horizon_lengths(BASE, mult, warp, MAXP, SPACING)
+        check(a == b, f"mult={mult} warp={warp}", f"{a} vs {b}")
+
+# --- 2. beim grabbing ist `wanted` konstant, `drawn` folgt der auslenkung
+print("2. grabbing pinnt die gerechnete laenge an die decke")
+prev_wanted = None
+for mult in (0.5, 1.0, 2.0, 3.7):
+    drawn, wanted = horizon_targets(BASE, mult, 1.0, MAXP, SPACING,
+                                    grabbing=True, ceiling_mult=CEIL)
+    exp_drawn, _ = predictor_horizon_lengths(BASE, mult, 1.0, MAXP, SPACING)
+    check(abs(drawn - exp_drawn) < 1.0, f"drawn folgt mult={mult}",
+          f"{drawn} vs {exp_drawn}")
+    if prev_wanted is not None:
+        check(wanted == prev_wanted, f"wanted konstant bei mult={mult}",
+              f"{wanted} vs {prev_wanted}")
+    prev_wanted = wanted
+
+_, ceil_wanted = predictor_horizon_lengths(BASE, CEIL, 1.0, MAXP, SPACING)
+check(prev_wanted == ceil_wanted, "wanted == die decken-laenge",
+      f"{prev_wanted} vs {ceil_wanted}")
+
+# --- 3. grabbing ohne ceiling_mult faellt auf das alte verhalten -----
+print("3. grabbing ohne decke = normalverhalten")
+a = horizon_targets(BASE, 2.0, 1.0, MAXP, SPACING, grabbing=True,
+                    ceiling_mult=None)
+b = predictor_horizon_lengths(BASE, 2.0, 1.0, MAXP, SPACING)
+check(a == b, "kein ceiling_mult -> unveraendert", f"{a} vs {b}")
+
+print()
+if FAILURES:
+    print(f"FEHLGESCHLAGEN: {len(FAILURES)}")
+    for f in FAILURES:
+        print(f"  {f}")
+    sys.exit(1)
+print("test.horizon_targets: alle pruefungen bestanden")

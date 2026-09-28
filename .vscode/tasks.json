@@ -1,0 +1,20 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Run current Python file (log to output.txt)",
+            "type": "process",
+            "command": "${command:python.interpreterPath}",
+            "args": [
+                "${workspaceFolder}/tools/run_and_log.py",
+                "${file}"
+            ],
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "panel": "shared"
+            },
+            "problemMatcher": []
+        }
+    ]
+}

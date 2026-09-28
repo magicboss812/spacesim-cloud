@@ -1,0 +1,292 @@
+1. Vorhersage-horizont bleibt beim hineinzoomen erhalten
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   view_scale 2e-09: horizont zu >95 % gezeichnet -- 100.0 % (9.999e+09 von 1.000e+10 m)
+  ok   view_scale 2e-07: horizont zu >95 % gezeichnet -- 100.0 % (9.999e+09 von 1.000e+10 m)
+  ok   view_scale 2e-06: horizont zu >95 % gezeichnet -- 100.0 % (9.999e+09 von 1.000e+10 m)
+  ok   view_scale 2e-05: horizont zu >95 % gezeichnet -- 100.0 % (9.999e+09 von 1.000e+10 m)
+  ok   view_scale 2e-04: horizont zu >95 % gezeichnet -- 100.0 % (9.999e+09 von 1.000e+10 m)
+  ok   view_scale 2e-03: horizont zu >95 % gezeichnet -- 100.0 % (9.999e+09 von 1.000e+10 m)
+  ok   punktabstand faellt nicht unter die horizont-schranke -- eff=1e+06 floor=1e+06
+
+2. Schneller integrator liefert exakt dasselbe wie der langsame
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   1000 s: position und geschwindigkeit identisch -- |dpos|=0.000e+00 m |dvel|=0.000e+00 m/s
+  ok   1000 s: gleiche anzahl teilschritte -- 8 vs 8
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   100 800 s (7d/s-frames): position und geschwindigkeit identisch -- |dpos|=0.000e+00 m |dvel|=0.000e+00 m/s
+  ok   100 800 s (7d/s-frames): gleiche anzahl teilschritte -- 8 vs 8
+
+3. Zeitraffer-halt: kein zittern, kein auslaufen
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   die kurve steht still -- mit halt wie ohne -- median 0.000e+00 m gehalten vs 6.141e+02 m ohne halt (= 0.0000 / 0.0012 px)
+  ok   gehaltene kurve bleibt auch im 99. perzentil unter einem halben pixel -- p99 = 6.209e+00 m = 0.0000 px
+  ok   die linie laeuft im halt nie aus (failsafe greift) -- kleinste punktzahl 10000, kleinster zeitvorlauf 327054 s
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   nachgerechnet wird selten, nicht jeden frame -- alle 150 frames (2.50 s bei 60 fps)
+  ok   ueber 90 % der frames werden gehalten -- 99 %
+
+4. Die gehaltene kurve rueckt STETIG vor, nicht in stufen
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   der kopf IST die schiffsposition -- groesster abstand 0.000e+00 m
+  ok   hinter dem kopf bewegt sich beim halten nichts -- groesste bewegung 0.000e+00 m
+  ok   das erste segment laeuft stetig von voller auf null laenge -- 0.03 .. 3.58 punktweiten
+
+5. Die linie rollt: vorn verbraucht, hinten verlaengert
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   1h/s: horizont bleibt konstant -- laenge 1.000 .. 1.000 des horizonts
+  ok   1h/s: die naht ist luecklos -- groesstes segment = 1.02 x punktweite
+  ok   1h/s: kaum noch vollberechnungen -- 0 in 240 frames
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   1d/s: horizont bleibt konstant -- laenge 1.000 .. 1.000 des horizonts
+  ok   1d/s: die naht ist luecklos -- groesstes segment = 1.02 x punktweite
+  ok   1d/s: kaum noch vollberechnungen -- 0 in 240 frames
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   7d/s: horizont bleibt konstant -- laenge 1.000 .. 1.000 des horizonts
+  ok   7d/s: die naht ist luecklos -- groesstes segment = 1.02 x punktweite
+  ok   7d/s: kaum noch vollberechnungen -- 1 in 240 frames
+
+6. Echtzeit ist bei jeder bildrate erreichbar
+pygame 2.6.1 (SDL 2.28.4, Python 3.13.14)
+Hello from the pygame community. https://www.pygame.org/contribute.html
+  ok   unterste warp-stufe == realtime_warp_max -- stufe 60.0 s/s, grenze 60.0 s/s
+  ok   unterste stufe laesst den schub frei -- geprueft bei 30..240 fps, ueberall genau 60.00 s/s
+  ok   PageDown erreicht denselben boden -- 60.00 s/s
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   regler zeigt in der untersten stufe den prozentwert -- 60.00 s/s -> '100%'
+  ok   regler zeigt bei 7d/s weiterhin HOLD -- 604800 s/s
+
+7. Nach reset() kommt die linie zurueck -- auch im zeitraffer
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   vorlauf: linie steht -- 10000 punkte
+  ok   reset() loescht den vermerk des letzten ergebnisses
+  ok   die linie ist nach wenigen frames wieder da -- nach 3 frames
+  ok   keine trajektorien-invalidierung je frame -- version 0 .. 0, 1 verschiedene
+
+8. Die tangente ueberlebt die schrumpfende kopfsehne
+  ok   kopfsehne bis auf 1e-6 punktweiten: richtung bleibt stabil -- groesste abweichung 0.0085 Grad (bei c/weite = 2e-01)
+  ok   gleichmaessige stuetzweiten: bit-identisch zur alten regel -- 0.99995000041666637, 0.0099998333340608619
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   echter zeitraffer-lauf: prograde bleibt auf der bahntangente -- 900 frames, fehler median 0.0195, max 0.0313 Grad
+  ok   der fehler waechst nicht mit der zeit im zeitraffer -- max erste haelfte 0.0307, zweite haelfte 0.0313 Grad
+
+9. Schub blockiert den hauptthread nicht
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   update() bleibt unter schub im frame-budget -- median 0.52 ms, p90 0.61 ms (gleitflug 0.22 ms)
+  ok   die linie wird unter schub nicht geleert -- kleinste punktzahl unter schub 10000 von 10000
+  ok   die vorhersage wird waehrend des brennens erneuert -- 178 ergebnisse in 1.00 s eingewechselt
+  ok   kein trajektorien-neustart je schub-frame -- version 0 -> 0
+  ok   unter schub haengt die linie messbar hinterher (die eingegangene wette) -- 1.193e+07 m gegen 4.239e+05 m gleitflug-rauschen
+  ok   nach brennschluss rastet die linie wieder ein -- nach 1 frames: 1.193e+07 m unter schub -> 2.165e+05 m (gleitflug-rauschen 4.239e+05 m)
+
+10. Der koerper-notizblock rechnet BIT-IDENTISCH
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   notizblock bit-identisch -- weit gezoomt -- 10000 punkte, groesste abweichung 0.000e+00
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   notizblock bit-identisch -- nah gezoomt -- 10000 punkte, groesste abweichung 0.000e+00
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   notizblock bit-identisch -- bezug Erde -- 10000 punkte, groesste abweichung 0.000e+00
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   notizblock bit-identisch -- bezug Titan (mond, zweigliedrige kette) -- 10000 punkte, groesste abweichung 0.000e+00
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   notizblock bit-identisch -- nach schub -- 10000 punkte, groesste abweichung 0.000e+00
+  ok   und er ist deutlich schneller -- 209 ms -> 78 ms (2.7x)
+
+11. Ap/Pe-marker sitzen auf den analytisch bekannten radien
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   marker werden ueberhaupt gefunden -- 4 marker ueber 49042 s (20144 s umlaufzeit)
+  ok   sowohl periapsis als auch apoapsis dabei -- 2 Pe, 2 Ap
+  ok   periapsis-radius stimmt -- 7.9996e+06 m gegen 8.0000e+06 m (0.005 %)
+  ok   apoapsis-radius stimmt -- 2.3998e+07 m gegen 2.4000e+07 m (0.009 %)
+
+12. Die schub-pipeline erneuert oefter und NIE rueckwaerts
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   eingewechselte auftraege sind streng aufsteigend -- 359 wechsel, kein rueckwaertssprung
+  FAIL jede neue linie gehoert zu einem NEUEREN schiffszustand -- 359 schnappschuesse, kleinste zunahme -0.035 m/s
+  ok   die warteschlange laeuft nicht voll -- hoechstens 3 gleichzeitige auftraege bei tiefe 3
+  ok   tiefe 3 erneuert deutlich oefter als tiefe 1 -- 66/s -> 146/s (alle 15 ms -> alle 7 ms)
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   die tiefe waechst mit der rechenzeit -- 17 ms -> tiefe 3, 74 ms -> tiefe 8 (bei 11 ms bildzeit)
+  ok   die gewaehlte tiefe reicht fuer ein ergebnis je bild -- 3 laeufe x 11 ms = 33 ms >= 17 ms rechenzeit
+  ok   tiefe 1 in der konfiguration schaltet die pipeline wirklich ab -- genau ein lauf, wie vor der aenderung
+
+13. Schub wird auch NAHE DER PERIAPSIS erkannt
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   bahnpunkt 0deg (r = 7.0 Mm): schub erkannt, gleitflug nicht -- schub 12/12 bilder, gleitflug 0/12
+  ok   bahnpunkt 30deg (r = 7.4 Mm): schub erkannt, gleitflug nicht -- schub 12/12 bilder, gleitflug 0/12
+  ok   bahnpunkt 90deg (r = 11.9 Mm): schub erkannt, gleitflug nicht -- schub 12/12 bilder, gleitflug 0/12
+  ok   bahnpunkt 180deg (r = 39.7 Mm): schub erkannt, gleitflug nicht -- schub 12/12 bilder, gleitflug 0/12
+  ok   im zeitraffer feuert die erkennung NICHT (der halt bleibt heil) -- 0/6 bilder bei 100800 s je schritt
+
+14. Die linie zieht GLEICHMAESSIG nach, nicht in doppelschritten
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   kaum doppelschritte beim einwechseln (puffer 1) -- 0 von 240 bildern springen um mehr als einen auftrag
+  ok   ein groesserer puffer glaettet weiter -- puffer 2: 0 doppelschritte gegen 0 bei puffer 1
+  ok   der puffer haelt die linie nicht auf -- 100 % der bilder gehen voran
+  ok   auch mit puffer springt nie ein aelteres ergebnis ein -- alle schritte >= 0
+
+15. Die schrittweiten-deckelung haengt NICHT davon ab, WO auf der bahn
+    das schiff gerade steht
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   perihel und aphel kosten gleich viele integrationsschritte -- perihel 1252, aphel 1251 -- faktor 1.00
+  ok   beide treffen das schrittbudget -- budget 1250, perihel 1252, aphel 1251
+  ok   die zurueckgemeldete groesse ist die echte zeitspanne des horizonts -- gemeldet 87.84 d, gemessen 87.83 d
+  ok   reset() loescht die gemessene zeitspanne -- nach reset: 0.0
+  ok   beim standard-horizont aendert die rueckmeldung nichts (bit-identisch) -- max abweichung 0.000e+00
+
+16. Die schrittweiten-decke traegt den zeitraffer, ohne die bahn zu
+    verlieren
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   in echtzeit bleibt die decke unveraendert -- 3000.0 == 3000.0
+  ok   im zeitraffer zielt die decke auf die gewuenschte schrittzahl -- decke 4383.0 s = 175320 / 40
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  FAIL die decke senkt die teilschritte bei 1 y/s um mehr als das 20-fache -- ohne decke 1408, mit decke 1280 (faktor 1)
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   im 400-km-orbit aendert eine 3300x hoehere decke die schrittweite kaum -- 34.7 s -> 41.9 s (decke 100000 s, also faktor 2388 darunter)
+  ok   und die bahn bleibt in beiden faellen stehen -- hoehe nach 5 umlaeufen: 399.942 km / 399.942 km
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   characteristic_timescale liefert T/2pi -- gemessen 882.6 s, erwartet 882.6 s
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   im heliozentrischen fernfeld sperrt der riegel 1 y/s NICHT -- grenze 3.013e+08 s/s gegen 3.156e+07 s/s
+  ok   im 400-km-orbit sperrt er dagegen alles ab 1 d/s -- grenze 5.296e+04 s/s
+
+17. Der wechsel der zeitraffer-stufe haelt den hauptthread nicht an
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   10m/s -> 1h/s (halt springt an): wechsel-frame bleibt im hauptthread billig -- 0.4 ms (ruhe-median 0.2 ms)
+  ok   10m/s -> 1h/s (halt springt an): die linie bleibt waehrend des wechsels stehen -- kleinste punktzahl 10000
+  ok   10m/s -> 1h/s (halt springt an): der gezeichnete horizont pulsiert nicht -- kleinster gezeichneter anteil 100.0 %
+  ok   10m/s -> 1h/s (halt springt an): die neue laenge kommt an -- nach 0 frames
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   7d/s -> 30d/s: wechsel-frame bleibt im hauptthread billig -- 2.0 ms (ruhe-median 0.4 ms)
+  ok   7d/s -> 30d/s: die linie bleibt waehrend des wechsels stehen -- kleinste punktzahl 10579
+  ok   7d/s -> 30d/s: der gezeichnete horizont pulsiert nicht -- kleinster gezeichneter anteil 98.7 %
+  ok   7d/s -> 30d/s: die neue laenge kommt an -- nach 4 frames
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   30d/s -> 100d/s: wechsel-frame bleibt im hauptthread billig -- 3.0 ms (ruhe-median 1.8 ms)
+  ok   30d/s -> 100d/s: die linie bleibt waehrend des wechsels stehen -- kleinste punktzahl 37716
+  ok   30d/s -> 100d/s: der gezeichnete horizont pulsiert nicht -- kleinster gezeichneter anteil 98.9 %
+  ok   30d/s -> 100d/s: die neue laenge kommt an -- nach 5 frames
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   100d/s -> 1y/s: wechsel-frame bleibt im hauptthread billig -- 8.7 ms (ruhe-median 3.7 ms)
+  ok   100d/s -> 1y/s: die linie bleibt waehrend des wechsels stehen -- kleinste punktzahl 38656
+  ok   100d/s -> 1y/s: der gezeichnete horizont pulsiert nicht -- kleinster gezeichneter anteil 99.3 %
+  ok   100d/s -> 1y/s: die neue laenge kommt an -- nach 4 frames
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   1y/s -> 100d/s: wechsel-frame bleibt im hauptthread billig -- 3.7 ms (ruhe-median 11.0 ms)
+  ok   1y/s -> 100d/s: die linie bleibt waehrend des wechsels stehen -- kleinste punktzahl 39187
+  ok   1y/s -> 100d/s: der gezeichnete horizont pulsiert nicht -- kleinster gezeichneter anteil 98.7 %
+  ok   1y/s -> 100d/s: die neue laenge kommt an -- nach 0 frames
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   100d/s -> 30d/s: wechsel-frame bleibt im hauptthread billig -- 2.0 ms (ruhe-median 3.8 ms)
+  ok   100d/s -> 30d/s: die linie bleibt waehrend des wechsels stehen -- kleinste punktzahl 39263
+  ok   100d/s -> 30d/s: der gezeichnete horizont pulsiert nicht -- kleinster gezeichneter anteil 98.7 %
+  ok   100d/s -> 30d/s: die neue laenge kommt an -- nach 0 frames
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   30d/s -> 7d/s: wechsel-frame bleibt im hauptthread billig -- 0.6 ms (ruhe-median 1.9 ms)
+  ok   30d/s -> 7d/s: die linie bleibt waehrend des wechsels stehen -- kleinste punktzahl 10000
+  ok   30d/s -> 7d/s: der gezeichnete horizont pulsiert nicht -- kleinster gezeichneter anteil 100.0 %
+  ok   30d/s -> 7d/s: die neue laenge kommt an -- nach 0 frames
+
+18. Welt und vorhersage rechnen dieselbe bahn
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   das schiff bleibt auf der vorhergesagten linie, bei jeder chunk-groesse -- 5s: 5.198e+01 m  300s: 5.196e+01 m  1000s: 5.192e+01 m
+  ok   und die bahn haengt nicht davon ab, wie fein man sie zerlegt -- 1000 s gegen 5 s: 6.784e-02 m
+  ok   vertauschte reihenfolge (planets vor dynamics) faellt durch -- 9.382e+06 m gegen 5.192e+01 m
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   im zeitraffer bleibt das schiff auf der gehaltenen linie -- groesster seitlicher versatz 1.571e+03 m = 0.016 px ueber 1200 frames (1.5 umlaeufe)
+  ok   und keine Ap/Pe-fahne sitzt auf dem schiff, wo es gar kein extremum gibt -- 0 von 1200 frames
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   die schranke rechnet pixel in meter um -- 0.5 px bei 1e-5 px/m = 50000.0 m
+  ok   und zwar mit dem zoom, nicht fest -- 0.5 px bei 1e-3 px/m = 500.0 m
+  ok   0 px heisst AUS, nicht 'null meter erlaubt' -- inf
+
+19. Der selbst vorangestellte kopf faelscht die apsis-suche nicht
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   ohne die absicherung erzeugt der versetzte kopf eine fahne am schiff -- erste fahne bei 1.50 punkten (unversetzt 849.0)
+  ok   mit skip_head bleibt die fahne dort, wo sie ohne versatz war -- erste fahne bei 849.02 punkten (unversetzt 849.02)
+  ok   und sie meldet dieselben fahnen wie die ungestoerte kurve -- 13 gegen 13 fahnen
+  ok   ohne halt (skip_head = 0) ist die suche bit-identisch -- gleicher aufruf, gleiches ergebnis
+
+20. Ein langer horizont verbiegt die bahn nicht
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   16x horizont: dieselbe bahn wie mit fester schrittdecke -- groesste abweichung 0.000e+00 m ueber 1468 h
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   64x horizont: dieselbe bahn wie mit fester schrittdecke -- groesste abweichung 0.000e+00 m ueber 5976 h
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   im fernfeld bleibt der bahn-riegel weit ueber der decke -- bahn-riegel 1.633e+05 s gegen decke 1.200e+05 s (t_char 4.898e+06 s)
+
+21. bahn-zeitskala auf einer mondtransferbahn
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   genug messpunkte fern der koerper (sonst prueft (a) nichts) -- 65 von 84 paaren
+  ok   t_char ist fern der koerper stetig (2-%-radiusschritt) -- groesster sprung 1.19x bei r = 4.416e+08 m
+  ok   erlaubter frame-schritt bleibt unter einem viertel der umlaufzeit -- groesster anteil 0.218 T bei r = 5.277e+08 m (T = 9.3059e+05 s)
+  ok   fernfeld unveraendert: 1 AU ergibt jahr/2pi -- 5.0225e+06 s gegen 5.0225e+06 s
+  ok   nahfeld unveraendert: LEO ergibt T/2pi -- 8.8258e+02 s gegen 8.8258e+02 s
+
+22. weltzustand unabhaengig von der chunk-groesse
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   chunk 1000 s liefert dieselbe schiffsposition wie 100 s -- abstand 7.6195e+00 m nach 6 tagen
+  ok   chunk 1000 s liefert dieselbe Mond-position wie 100 s -- abstand 1.8291e-02 m
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   chunk 4375 s liefert dieselbe schiffsposition wie 100 s -- abstand 6.7169e+00 m nach 6 tagen
+  ok   chunk 4375 s liefert dieselbe Mond-position wie 100 s -- abstand 2.8017e-02 m
+
+23. der zeitraffer aendert die gezeichnete linie nicht
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   manuell 1x: raffung x16 laesst die gezeichnete linie stehen -- groesste abweichung 0.0000e+00 m ueber 3.8 tage, 10000 gegen 10000 punkte
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   manuell 1x: raffung x64 laesst die gezeichnete linie stehen -- groesste abweichung 0.0000e+00 m ueber 3.8 tage, 10000 gegen 10000 punkte
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   manuell 8x: raffung x16 laesst die gezeichnete linie stehen -- groesste abweichung 0.0000e+00 m ueber 31.3 tage, 40000 gegen 40000 punkte
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   manuell 8x: raffung x64 laesst die gezeichnete linie stehen -- groesste abweichung 0.0000e+00 m ueber 31.3 tage, 40000 gegen 40000 punkte
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   gegenprobe: ohne deckel wandert dieselbe linie um megameter -- groesste abweichung 2.2731e+06 m, nur noch 626 punkte
+
+24. die schrittdecke ist ORTLICH, nicht global
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   LEO kreisbahn 6.8 Mm, 1x: ortliche decke ist bit-identisch zur globalen -- 1966 gegen 1966 schritte, groesste abweichung 0.000e+00 m
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   LEO kreisbahn 6.8 Mm, 64x: ortliche decke ist bit-identisch zur globalen -- 129021 gegen 129021 schritte, groesste abweichung 0.000e+00 m
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   exzentrisch rp 20 Mm e=0.6, 64x: ortliche decke ist bit-identisch zur globalen -- 15239 gegen 15239 schritte, groesste abweichung 0.000e+00 m
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   mondtransfer rp 7 Mm e=0.966, 4x: ortliche decke ist bit-identisch zur globalen -- 915 gegen 915 schritte, groesste abweichung 0.000e+00 m
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   abflug aus 7 Mm parkbahn, 128x: die ortliche decke spart ein vielfaches -- 56423 -> 1280 schritte (faktor 44.1), 1978 -> 56 ms
+  ok   abflug aus 7 Mm parkbahn, 128x: und es ist dieselbe bahn -- 5.532e+05 m = 0.0006 px (budget 0.3 px, ganzer bogen im bild)
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   abflug aus 100 Mm, 128x: die ortliche decke spart ein vielfaches -- 50467 -> 1267 schritte (faktor 39.8), 1921 -> 51 ms
+  ok   abflug aus 100 Mm, 128x: und es ist dieselbe bahn -- 3.727e+05 m = 0.0004 px (budget 0.3 px, ganzer bogen im bild)
+LOADER: Creating ship SaturnV with position=[147118051000.0, 0.0], velocity=[0.0, 35221.682]
+  ok   gegenprobe: am abflugpunkt ist die bahn-klammer enger als der boden -- t_char/30 = 30.9 s gegen boden 1500 s -- global gerechnet gilt das fuer die ganzen 2.85 jahre
+
+FEHLGESCHLAGEN: 2
+  jede neue linie gehoert zu einem NEUEREN schiffszustand: 359 schnappschuesse, kleinste zunahme -0.035 m/s
+  die decke senkt die teilschritte bei 1 y/s um mehr als das 20-fache: ohne decke 1408, mit decke 1280 (faktor 1)
