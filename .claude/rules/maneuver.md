@@ -199,6 +199,14 @@ zwei Bilder (§4 prüft das mit 1-Stunden-Frames: größter Überschuss 0.000e+0
 s). Innerhalb von `orient_lead_seconds` zwingt `_apply_maneuver()` in
 `runtime/loop.py` `camera.sim_dt` auf Echtzeit.
 
+**Der Ausführer meldet seinen Brennvorgang an die Darstellung.** Je
+Schritt mit Δv setzt er `ship.last_thrust_direction` (die **Nase**, nicht
+die Schubrichtung — die Hauptdüse brennt auch, während die Nase noch
+nachdreht) und `ship.last_thrust_level` = `profile.throttle_at(...)`, dieselben
+Felder wie `schiffcontrol.apply_thrust`; die Hauptschleife leert sie je
+Frame. Ohne das zeigte ein Autopilot-Brennvorgang keine Abgasfahne
+(`.claude/rules/body-art.md`, "Exhaust particles").
+
 **Handeingabe bricht immer ab.** Alle vier Steuertasten, nicht nur der
 Schub: wer im Brennvorgang dreht, macht die restliche Brenndauer ohnehin
 ungültig. Der Knoten bleibt dabei im Plan.
@@ -303,7 +311,22 @@ Frame, praktisch alles davon Python-Aufruf-Overhead. Hier waren es 900
 Punkte je Frame plus 400 weitere während eines Zugs, und *das* war neben der
 Rechnung im Hauptthread die zweite Hälfte des Bildraten-Einbruchs.
 `tests/maneuver_render_test.py` §3b vergleicht beide Wege: Abweichung
-0.000e+00 px. `maneuver.path_draw_points` (480) ist seit der Verfeinerung
+0.000e+00 px.
+
+**Im Spiel lief trotzdem der punktweise Weg — bis 2026-09-29.**
+`draw_prediction` räumt das Ursprungs-Fenster des Rahmens ab, bevor
+`draw_maneuver` zeichnet, und ohne Fenster gibt `to_this_frame_xy_arrays`
+`None` zurück: gemessen **575 skalare Transformationen je Frame, 2.78 ms**
+mit einem Knoten. Der Test merkte es nicht, weil er kein Fenster abräumt.
+`_maneuver_project` nimmt deshalb ohne Fenster
+`to_this_frame_xy_arrays_exact` — derselbe exakte Ursprung wie der skalare
+Weg, im Stapel (`.claude/rules/reference-frames.md`). Gegen die Schleife auf
+der echten Vorschaulinie: **0 px** in den nicht rotierenden Erde-/Sonne-
+Rahmen, **≤ 9.7e-13 px** in den rotierenden und im Mond-Rahmen (letztes Bit
+der Trigonometrie, unter der float32-Genauigkeit der Vertices).
+`draw_maneuver` **2.78 → 1.09 ms** Median.
+
+`maneuver.path_draw_points` (480) ist seit der Verfeinerung
 das **Budget**, nicht mehr ein Stride: die Punkte landen dort, wo die Kurve
 biegt, statt gleichmäßig über eine meist gerade Linie.
 
@@ -470,6 +493,35 @@ anderen Brennwertes, unterscheidet sich dieser Zustand nur durch ein
 Vorzeichen zwei Zeichen weit links. `palette.danger` ist dafür da und ist
 **keine fünfte Bedeutungsfarbe**: die vier Akzente tragen Bedeutung, `danger`
 trägt einen Zustand — wie `disabled`, das direkt daneben steht.
+
+## Ap/Pe der geplanten Bahn
+
+Die Gleitphase, mit der die Kette **endet**, wird im Arbeiter mit demselben
+Scan abgesucht wie die Vorhersagelinie (`preview._coast_apsides` →
+`_find_apsis_markers_numba`, `skip_head = 0`, `use_tangents = 1`, also auf
+der Kubik verfeinert). Nur dort: die Phasen zwischen zwei Knoten sind nicht
+die Bahn, die der Plan hinterlässt, und endet die Kette mit einem
+Brennbogen, gibt es keine. Ergebnis `ManeuverPreview.apsis_markers`, je
+Zeile `x, y, t_abs, kind, r, v_rel`; `v_rel` gleich mit (Hermite-Tempo
+minus zentrale Differenz des Bezugskörpers aus den Snapshot-Arrays), weil
+der Zettel sonst die oskulierende Bahn von **jetzt** nähme.
+
+Gezeichnet von `_draw_apsis_marker_rows(style='preview')` in
+`render/prediction.py` — eine Routine für Linie und Plan, gleiche Ausblendung,
+gleiche Transformation zur Markerzeit. Treffer in
+`renderer.preview_apsis_marker_hits`, mit zwei Feldern mehr als die der
+Linie: `(..., alpha, True, v_rel)`.
+
+**Farbe am Abzug entschieden, keine fünfte:** die Ap/Pe-Töne der Linie,
+45 % zum Grün der Planlinie gemischt (`ui.theme.apsis_rgb(..., preview=True)`,
+dieselbe Quelle für Marke und Zettel), Beschriftung im selben Ton statt weiß. Rein grün verlöre
+die Unterscheidung Ap/Pe; die Linienfarben unverändert wären von den Markern
+der Vorhersage nicht zu trennen.
+
+Gemessen an `--zoom 1.2e-5`: 800 m/s prograde → Pe 16.36 Mm am Knoten, Ap
+34.06 Mm (Vis-viva mit Sofortimpuls 33.9 Mm; der Rest ist der endliche
+Brennbogen); 1500 m/s retrograd → Ap 16.36 Mm am Knoten, Pe 5.24 Mm (unter
+dem Erdradius: der Plan schlägt ein).
 
 ## Farben: keine fünfte
 

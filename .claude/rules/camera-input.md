@@ -129,7 +129,9 @@ alone.
   `tests/prediction_projection_test.py` silently relied on (a sync rebuild
   freezing the line for each batch/scalar render pair) — its `draw_runs` now
   takes `refresh=False` for the second render of a pair instead.
-- **Left-click selects a body; a second click on it flies there.** `Home`
+- **Left-click selects a body; a second click on it flies there.** Before
+  the bodies an Ap/Pe marker is tried (pins its tooltip), after them the
+  prediction line (pins the point tooltip); see `.claude/rules/hud-ui.md`. `Home`
   returns to the ship, a click on empty space deselects. The ship is in the
   pick list like any other object.
 
@@ -190,8 +192,13 @@ alone.
 
 - `Camera.handle_event` / `update` take `ui_wants_mouse` / `ui_wants_keyboard`
   — the input-priority seam for the UI layers (custom UI → ImGui → world).
-- Arrow `Left`/`Right` — rotate ship. Arrow `Up`/`Down` — nose thrust
-  forward/backward.
+- Arrow `Left`/`Right` — rotate ship through a RATE (`schiff.spin`):
+  `rotation_accel` (8 rad/s²) up to `rotation_speed`, released the attitude
+  control brakes it the same way. In ground contact (`schiff.ground_contact`)
+  the keys are a weak torque (`ground_rotation_speed` 0.25 rad/s,
+  `_accel` 0.5) and theta belongs to the rigid body in `physics/surface.py`,
+  which pivots the ship on its foot instead of turning it through the
+  ground. Arrow `Up`/`Down` — nose thrust forward/backward.
 
 > **Thrust is real-time only; rotation always works.** Above
 > `simulation.realtime_warp_max` (60 sim-s/s — the HUD's lowest warp step)
@@ -266,8 +273,8 @@ alone.
 > that way. Measured after: worst case 0.011° instead of 0.388° over 3000
 > frames, and flat instead of growing.
 - **The HUD is mouse-driven and mirrors the keybinds.** Warp buttons write
-  `camera.sim_dt`; SRF/ORB/TGT writes `UIState` (same state as
-  `1`/`2`/`T`); the snap rosette calls `ship_control.toggle_snap` (same as
+  `camera.sim_dt`; SRF/ORB writes `UIState` (same state as
+  `1`/`2`); the snap rosette calls `ship_control.toggle_snap` (same as
   `I`/`K`/`J`/`L`); the throttle arc scales `ship_control.thrust_acc`; SYSTEM /
   LOCAL set `camera.target_scale` from the real body distances; the body
   drawer under the ship badge writes `UIState.set_reference_index` (same
@@ -299,8 +306,13 @@ alone.
   field has focus.
 - `O` — toggle the bodies' orbit lines (`bodies/orbit_lines.py`).
 - `P` — toggle predictor. `E` — toggle epicycle (Ptolemaic) mode.
-- `R` — cycle reference body. `1` — non-rotating frame.
-  `2` — body-direction frame. `T` — target overlay.
+- `R` — cycle reference body. `1` — non-rotating frame (ORB).
+  `2` — body-fixed surface frame (SRF, `BodyFixedReferenceFrame`: turns with
+  the body, a landed ship reads 0 m/s). The target overlay and `T` are gone.
+  **`theta` is clockwise**: the frame's `transform_heading` is
+  `theta - angle`, not the `(cos, +sin)` round trip the body-direction frame
+  uses; that round trip drew the nose `2 x rotation angle` off and thrust
+  "towards the planet" flew away from it.
 - `+` / `-` — predictor length ×2 / ÷2 (instant, full recompute). `9` / `0` —
   predictor precision (finer / coarser). The **HUD horizon slider**
   (bottom-left, under FRAME) is the smooth alternative to `+` / `-`: a
@@ -311,8 +323,98 @@ alone.
   2.56 Tm; past `4×` the point spacing coarsens exactly as it does under `+`.
   See `.claude/rules/hud-ui.md`.
 - `PageUp` / `PageDown` — sim_dt up / down. `Esc` — quit.
-- **Warp steps are `1m/s, 10m/s, 1h/s, 1d/s, 7d/s, 30d/s, 100d/s, 1y/s`**
+- `.` / `,` — one cell of the warp bar up / down (`Hud.step_warp`); the pause
+  is the lowest cell and is SET, not toggled, so `,` in a pause stays paused
+  and `.` from it goes to 1s/s. A greyed step is not entered. Key codes, not
+  `event.unicode`: with Shift held (throttle) German layout sends `;` / `:`.
+- `Shift` / `Ctrl` — throttle up / down at `ship.throttle_rate_per_s` (0.5 of
+  the range per real second), polled like the arrows, written through
+  `Telemetry.set_thrust_level` like the throttle arc. `LCtrl` with `RAlt`
+  held is ignored: on a German Windows layout AltGr arrives as that pair.
+- `Space` — pause (also the leftmost cell of the warp bar, and a checkbox in
+  the dev UI's Simulation header). `F12` — screenshot (below).
+
+> **Pause is `camera.paused`, never `sim_dt = 0`.** `min_sim_dt` floors
+> `sim_dt` and several places divide by it. `runtime/loop.py` sets
+> `sim_step = 0` while paused and skips `maneuver_executor.update`, so
+> `world.step` returns at once, the mission clock stops and an armed node
+> does not progress. `sim_dt` is untouched, so unpausing (Space again, a
+> second click on the pause cell) runs on at the previous step; clicking a
+> warp step also unpauses. `Camera.thrust_allowed` returns False while
+> paused (throttle shows `HOLD`, the predictor sits in the warp hold);
+> rotation, camera, HUD and prediction keep running. Measured through
+> `runtime.loop.run`: `world.time` 2871.72 s before and after 239 paused
+> frames, a wheel zoom in that window still moved `target_scale`
+> 1e-6 → 3.375e-6, `sim_dt` 6.0 before and after.
+
+> **The F12 capture is read between `ui_root.render()` and
+> `devui.render()`** (`runtime/screenshot.py`, called from `runtime/loop.py`
+> right after `devui.build()`): world + player HUD, no ImGui pixel. The dev
+> UI's button is pressed inside `build()`, so it lands in the same frame.
+> Only `glReadPixels` runs on the main thread (10 ms at 2560×1440 on
+> llvmpipe); flip, PNG encode and write run on a one-worker pool, shut down
+> (waited for) when the loop ends. **The encoder is numpy + `zlib`, not
+> `pygame.image.save`**: pygame holds the GIL for the whole encode and the
+> main thread stood still for up to **520 ms**; `zlib.compress` releases it,
+> longest main-thread gap **6–11 ms** (idle 0.8 ms).
+> Folder `screenshot.directory` (relative = `spacesim/`, git-ignored), name
+> `spacesim_YYYY-MM-DD_HHMMSS.png`, `_2`… within the same second.
+>
+> **Resolution and crop** (dev UI → "screenshot settings", default
+> `screenshot.resolution` = `window`). `2K/4K/6K/8K` are fixed **heights**
+> 1440/2160/3240/4320; only the **width** is cropped (left/right edge as a
+> fraction of the window, "symmetric", "snap to centre", "full width"), so
+> the PNG is `crop width × height / window height` wide. The crop overlay
+> (shade outside, 2-px border lines, constants in `runtime/screenshot.py`,
+> deliberately not in config) is drawn after the capture point, so it never
+> lands in the image. Any height other than the window's goes through
+> `ScreenshotWriter.render_scaled`, which runs **before** the normal
+> `renderer.render()` of the frame: the renderer publishes screen positions
+> while drawing (`apsis_marker_hits` …), and the next clicks must see the
+> window's. A dev-UI click therefore lands one frame later; F12 the same
+> frame. Measured on llvmpipe: 4K 450 ms and 8K 1.3–1.5 s from a 1920×1081
+> window, 6K 690 ms from 1280×801, one hitch per capture; a window shot taken after an 8K
+> capture differs from one before by a mean 0.18/255 inside the crop
+> (nothing left behind). The rules for drawing at k× are in
+> `.claude/rules/rendering.md`.
+- **WARP TO** (`runtime/warp_to.py`, from a pinned tooltip). Per frame,
+  before `_clamp_warp`, the highest step that the orbit allows (same cap as
+  `clamp_warp_to_timescale`) and on which the remaining time still takes
+  `warp_to.lead_real_seconds` (1.5) of real time, **floored at 1m/s**
+  (`realtime_warp_max`); the sim step is capped at the remaining time like
+  `maneuver_executor.max_sim_seconds`, so it cannot overshoot. With a 1s/s
+  floor no step passed the lead rule below 90 s remaining, and the last
+  stretch ran in real time for up to 90 s with the target still active.
+  Arrival drops to the lowest step (1s/s), **not** pause: one usually warps
+  to an apsis to burn there, and thrust is real-time only.
+  Cancelled by a manual warp change (detected as `sim_dt` differing at frame
+  start from what `note_applied` saw after `_apply_maneuver`) and pause,
+  which keep the player's step; and by thrust keys, a teleport and the
+  tooltip's own button (a press while that target runs is a stop), which
+  `cancel(..., settle=True)` drops to 1s/s like an arrival. **A world click
+  does not cancel.** It used to (buttons 1–3): a right/middle-drag pan or a
+  selection dropped the target and left `sim_dt` on the high step, i.e. a
+  warp without an end. Measured through `runtime.loop.run` with right, left
+  and middle presses posted mid-warp: 600 s ahead, steps 1m/s, arrival with
+  **0.000e+00 s** difference. Earlier measurement: an Ap 171 043 s ahead →
+  steps 1d/s, 1h/s, 10m/s, 1m/s, stop at target − 1800 s; a Pe 1185 s ahead
+  offers a greyed button and the click starts nothing; a line point 5370 s
+  ahead → 0 s difference, ship 11.9 m from the point drawn at pin time.
+- **Warp steps are `1s/s, 1m/s, 10m/s, 1h/s, 1d/s, 7d/s, 30d/s, 100d/s, 1y/s`**,
+  and the game starts at `1s/s` (`simulation.initial_warp_rate` 1.0, real
+  time; `allow_warp_rate` lowers the tick floor to reach it). **Manual thrust
+  is a sim-time acceleration**: `runtime/loop.py` scales `apply_thrust`'s
+  real `dt` by `min(1, warp / realtime_warp_max)`, so the ship feels
+  10 m/s² at every step (at `1m/s` the factor is exactly 1, the old
+  behaviour; unscaled, `1s/s` would have given 600 m/s²). Before 1s/s the
+  lowest step was 1m/s, which is still the ceiling for thrust
   (`ui/hud/layout.py::WARP_STEPS`, sim-seconds per real second). The top
   three were added 2026-08-18; steps that the current orbit cannot resolve
   are greyed out and refuse clicks, and `_clamp_warp` in `runtime/loop.py`
   backstops the keyboard. See the time-warp note in `.claude/rules/physics-world.md`.
+  The bar has **one cell more than `WARP_STEPS`**: cell 0 is the pause
+  (`WarpBar.PAUSE_INDEX`, a two-bar glyph drawn with `ctx.draw.rect`), cell
+  `i > 0` is `WARP_STEPS[i - 1]`. `Hud._warp_index` / `_set_warp` /
+  `_warp_step_enabled` speak cells, not steps; the cumulative fill starts
+  at cell 1 (`SegmentBar.cumulative_from`), so the pause is never part of
+  the level.

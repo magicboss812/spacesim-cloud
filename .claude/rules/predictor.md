@@ -65,7 +65,7 @@ anchoring, `points[0]` is the ship's position at `world.time`.**
   `_find_apsis_markers_numba` scans the prediction line for local min/max
   distance to the reference body; `Predictor.get_apsis_markers()` returns
   them lazily (cached per points-array identity),
-  `Renderer._draw_apsis_markers` draws Pe/Ap diamonds + distance labels.
+  `Renderer._draw_apsis_marker_rows` draws the Pe/Ap plaques + distance labels (`rendering.md`).
   Toggles: `predictor.apsis_markers_enabled`, `renderer.show_apsis_markers`.
   **`_refine_apsis_numba` places the marker on the CUBIC, not on its chord**
   (2026-08-31). The parabola fit on `d²` gives the vertex's *parameter*; the
@@ -343,8 +343,8 @@ anchoring, `points[0]` is the ship's position at `world.time`.**
 > jittering because it did not.** Fixed 2026-08-25. Outside the warp hold
 > `_anchor_first_point` translated the whole curve rigidly so its head sat on
 > the ship. The shift is not one frame of motion but the **whole age of the
-> snapshot** (`max_async_wall_age` allows 1.5 s of real time, i.e. up to 90
-> sim-seconds of orbital motion at 60 s/s), and the reference body does *not*
+> snapshot** (up to 1.5 s of real time then, i.e. up to 90 sim-seconds of
+> orbital motion at 60 s/s), and the reference body does *not*
 > move with it. What is left over is the ship↔body **relative** motion: the
 > entire conic sits that far to one side of the body, which is precisely the
 > periapsis height. Because the age tracks the compute latency, the displayed
@@ -490,8 +490,10 @@ anchoring, `points[0]` is the ship's position at `world.time`.**
 > Measured 2026-08-17: the same compute is **61.7 ms with moving bodies and
 > 0.6 ms with them frozen**. Every acceleration evaluation asked each body for
 > its position at time `t`, and each of those ran a full Kepler solve. Three
-> kinds of pure repetition sat inside that, and `body_memo` — a `(n,10)`
-> scratch array threaded down the `_time_` kernel chain — removes all three
+> kinds of pure repetition sat inside that, and `body_memo` — an
+> `(n, BODY_MEMO_COLUMNS)` scratch array threaded down the `_time_` kernel
+> chain (column map in `physics/kernels/kepler.py` above `MEMO_GROUP`; a
+> plain `(n,10)` block still works, with one time slot) — removes all three
 > **bit-identically**:
 >
 > 1. **Same body, same time, asked again.** Columns `[t, x, y, valid]` per
@@ -716,7 +718,9 @@ anchoring, `points[0]` is the ship's position at `world.time`.**
 > | apoapsis (39.7 Mm) | 0.000 m/s | 6.67 m/s |
 >
 > The 1 m/s tolerance now sits ~290× above the coasting noise and ~7× below
-> the thrust signal, everywhere. It also catches a case the old rule missed
+> the thrust signal, everywhere. `g` comes from `world.acceleration_at_fast`,
+> the numba twin of `acceleration_at` (bit-identical, 0.144 → 0.028 ms per
+> frame; `.claude/rules/physics-world.md`). It also catches a case the old rule missed
 > even without the gravity margin: thrust opposing gravity, where the *total*
 > jump is 0.98 m/s (under tolerance) but the residual is 6.66 m/s.
 >
@@ -770,7 +774,8 @@ anchoring, `points[0]` is the ship's position at `world.time`.**
 > fixes it, because the two numbers are within 2× of each other.
 > `predictor.thrust_pipeline_depth` (6) caps how many computes may run at
 > once. Since at most one is submitted per frame they *start* one frame apart
-> and so *finish* one frame apart. Latency is untouched; each individual line
+> and so *finish* one frame apart. Latency is untouched (the lead in "A job
+> starts from the state at its DISPLAY time" below removes it); each individual line
 > is still one compute old.
 >
 > **The depth is derived, not chosen.** `_target_pipeline_depth()` =
@@ -869,3 +874,177 @@ anchoring, `points[0]` is the ship's position at `world.time`.**
 > game does not compute. Fixed 2026-08-21, and §18 now asserts both the
 > chunk-independence and that the swapped order fails.
 
+
+## Long horizons (Task 1 B, 2026-09-30)
+
+> **The acceptance check is `tools/transfer_bench.py`.** It builds the app like
+> `tools/game_shot.py`, flies a Hohmann departure from the Erde parking orbit
+> to Saturn (256× horizon) or Neptun (1024×) as an executed node or as manual
+> full throttle, and reports the burn (share of frames with a fresh line,
+> shown line's age, deviation from a synchronous reference), the settle after
+> burnout, the predicted Ap right after burnout and a warp to it through the
+> loop's real step pattern (actual distance extremum, marker drift). px are
+> for 2560×1440 with the target's SOI filling the screen height. Frames are
+> paced at 180 fps because the async pipeline runs on wall time.
+> `--snapshots-after` / `--dump-snapshots` save the game's snapshots at given
+> sim-seconds after burnout, for kernel comparisons on identical input.
+> `--coast-frames N` adds N real-time coast frames tracking every marker
+> (spread of r / t, label changes); `--no-warp` skips the warp to the Ap;
+> the report carries `burn_samples` (per-sample deviation, line age, Erde
+> energy), `burn_swaps` (every accept/reject with its lead) and
+> `burn_trace` (per frame: jobs in flight, lag, lead).
+>
+> **A bound orbit on a long horizon costs per revolution.** The horizon is an
+> arc in the barycentric frame, so anything near Erde covers it at ~30 km/s:
+> 256× is 989 days, **4 100 revolutions** of the 5.8 h parking orbit,
+> **127 513 steps**. Every job of the first ~30 % of a transfer burn is such a
+> job; with the old 1.5 s wall-age gate none of them was ever shown (fresh
+> line in 1.3–2.1 % of burn frames, the shown line 334 s old, and at Neptun
+> the first post-burnout line 31 s after burnout).
+
+> **The Ap error of a transfer is the departure tolerance, and it depends on
+> the MOMENT the line starts from.** The error control scales with
+> `rtol · |p|`, `|p|` the BARYCENTRIC radius: at 1e-7 that is 15 km per step
+> next to Erde. Both kernels on the same dumped snapshots agree to ≤ 2 m, yet
+> the error against the world moves with the snapshot's time: Neptun
+> 2.50e7 m from +131 s after burnout, 2.94e7 m from +1866 s, and the old
+> build's first line (always ~+1750 s, fixed by the wall-age gate) 2.66e7 m.
+> A fresher line therefore samples that spread (measured 3.04e7 and 3.45e7 m
+> from +5 / +11 s). **The balanced preset is `rkn_rtol` 1e-8 for that
+> reason:** Saturn 3.68e6 → 1.30e6 m, Neptun 3.03e7 → 1.24e7 m against a tight
+> reference (`rtol` 1e-11, `max_dt` 2000 s, 226 m from the world) for
+> **+0.2 %** steps on the transfer, **+51 %** in bound orbits (LEO 1×
+> 488 → 737 steps, 256× 127 524 → 192 064). Raising `rkn_max_dt_ceiling`
+> 120 000 → 1e6 s on top would cut the transfers to 362 / 1 935 steps at
+> +5 % Ap error against rtol alone and breaks §20's far-field counter-check:
+> measured, not done.
+>
+> **The same spread is the marker drift in real-time coasting.** Each swap
+> re-integrates from a new point of the departure hyperbola, so the error
+> above is re-sampled every ~0.25 s: Neptun, from world states 0.3 … 1900 s
+> after burnout, Ap time spread 1110 s and Pe time 2218 s at rtol 1e-8,
+> 3529 s off a tight reference. It is NOT the step grid (ceiling steps put on
+> an absolute time grid: spread unchanged) and not the ceiling (20 000 s:
+> unchanged); rtol 1e-11 alone gives 12 s / 25 s, 32 s off, for **+0.6 %**
+> steps (Saturn +3 %), because only the few hundred departure steps are
+> tolerance-limited; the rest sit at the ceiling. In bound orbits 1e-11 costs
+> 4× (LEO 1× 2989 → 11920 steps). Hence `predictor.rkn_rtol_unbound` 1e-11:
+> `_compute_from_snapshot_impl` uses it (rtol and both atol scaled) when the
+> coast STARTS unbound against the body with the smallest Kepler timescale
+> (`_coast_start_unbound`). A job that starts bound and meets a flyby later
+> is not covered; that needs a per-step form in the kernel.
+
+> **Body placement: place once, sum once, and no array-passing calls in the
+> hot path.** `_compute_acc_time_numba` first places every source for its
+> `local_t` into the memo's `MEMO_POS` columns (`kepler._place_bodies_numba`),
+> then sums from there; `_local_timescale_numba` reads the same placement,
+> which it warms. Three rules, each measured:
+>
+> 1. **Five time slots per body, not one.** Step doubling asks 5 distinct
+>    times per step, and with one slot `t`, `t+h/2`, `t+h` are evicted before
+>    they are asked again: 7 Kepler solves instead of 4. `(t+h/2)+h/2` is not
+>    `t+h` in the last bit, so hits need the exact time as stored.
+> 2. **A numba function containing a non-inlined call that passes arrays pays
+>    ~120 ns per invocation, even when that call is not taken** (reference
+>    counting; the same table lookup 9 ns without, 130 ns with such a call in
+>    its body). `_kepler_rel_consts` is therefore the Kepler solve from
+>    scalars only, word for word `bodies.kepler_relative_xy`, and the
+>    placement walks planet / moon chains itself.
+> 3. **ONE summation loop for memo on and off, compiled with
+>    `_ACC_FASTMATH` (no `reassoc`).** Reading positions from an array lets
+>    LLVM vectorise and reorder the 28-term sum: 1.4 m on the Saturn transfer
+>    with full fastmath, 2.3 m with two loops of identical source.
+>    `use_body_memo` on/off stays `array_equal` (§10).
+>
+> **Numba's disk cache does not see a changed callee in another file.** After
+> editing `kepler.py`, a kernel in `integrators.py` or `propagate.py` may
+> still run the old callee. Delete `__pycache__/*.nbi` / `*.nbc` before
+> measuring.
+
+> **Two approximations, both switched by config and both off (0) in a bare
+> `Predictor()`**, so every test that builds one without the loader stays
+> exact:
+>
+> - **Far moon systems as one body** (`predictor.group_far_moons_factor`,
+>   300): beyond 300 × a moon's apocentre distance a planet pulls with its
+>   system mass and its moons are not placed
+>   (`propagate._setup_far_moon_groups`, `MEMO_GROUP`). Saturn transfer:
+>   line within 139 m of exact over 1.4e12 m, Ap 59 m; factor 30 gives
+>   1.1e6 m (the counter-check in §10).
+> - **Planet table** (`predictor.planet_table_accel_tol`, 1e-15 m/s²): a
+>   planet farther than `D_min` from the ship comes from a Lagrange cubic
+>   over exact knots on a fixed time grid, cached lazily per run
+>   (`propagate._setup_planet_table`, `MEMO_TAB`). The knot spacing follows
+>   from the cubic bound `(9/16)/24 · h⁴ · max|x⁗|` with the perihelion
+>   factor `(1+e)/(1-e)⁵`, `D_min` from that error's pull. Ap 0.78 m against
+>   exact; the win is in bound orbits (1964 → 1127 ms at 127 k steps).
+>
+> Kernel alone, Saturn transfer, same snapshot: exact (slots + placement)
+> 77.8 ms, + grouping 34.8 ms, + table 40.6 ms (the table costs a little on a
+> transfer and pays in bound orbits). In the bench 205 → 45 ms.
+
+> **Under thrust a job starts from the state at its DISPLAY time, not at its
+> submit time** (latency compensation, `predictor.thrust_latency_compensation`).
+> `_thrust_lead_model` picks the thrust: the executor's `BurnProfile` (handed
+> over each frame by `runtime/loop.py::_executor_thrust_plan`, exact,
+> burnout included) or the held manual input (the detector's
+> gravity-subtracted residual per step, plus its turn rate between two
+> frames, so a prograde hold is followed). The lead is the measured
+> submit → arrival latency in WALL seconds (`_lead_lag_wall_ema`, from
+> EVERY arriving result, rejected ones included) times the CURRENT warp rate
+> the loop hands over (`set_sim_rate`), rounded to whole sim steps of a frame
+> (`_sim_step_last`: the ship exists only at frame boundaries; 6.04 s instead
+> of 6.00 s at 3 s steps is 1.0e6 instead of 6.5e3 m in §9) and capped by
+> `thrust_lead_max_s`. Both halves are load-bearing. The old estimate was sim-second lag of ACCEPTED
+> swaps, with `_sim_rate_ema` as the fallback: at ignition straight after a
+> warp the EMA still carried the warp rate, so the first jobs got the 900 s
+> cap as lead (the shown line assumed the whole rest of the burn), and once
+> that exact line was up, every later line arrived after its shorter lead,
+> was rejected as worse, and never corrected the EMA: **185 s of burn
+> without a new line**, burn deviation p95 1838 px (node) / 2514 px
+> (manual), Saturn bench. After: 172 / 32 px, 0 rejections.
+> Under a lead the job also gets a step budget (`predictor.thrust_max_steps`,
+> 20 000; Principia caps every prediction at `max_steps` the same way): at a
+> transfer horizon the still-bound orbit costs 1.7–2 s per job, and the line
+> is shorter under thrust instead. And coast jobs still running at ignition
+> do not count against the thrust pipeline depth (`_coast_job_ids`,
+> `_async_jobs_in_flight(exclude_coast=True)`; the pool has 2 × depth
+> threads, a running kernel cannot be cancelled). With the three fixes the
+> first fresh line comes 9–12 s after ignition (was 114–190 s) and the
+> Saturn burn deviation p95 is 50–75 / 29–40 px (two runs). The worker runs `burn.py::_thrust_lead_numba` (RK4,
+> step ≤ `thrust_lead_max_step_s`, cut at the profile's kinks), then the
+> coast kernel from its end. The thrust arc (thinned to ≤ 16 segments) is
+> part of the line, so `_anchor_first_point` consumes it like everything
+> else: the curve is never translated. Coasting has no lead, and the path is
+> unchanged there.
+>
+> **In real time a result is judged against the SHIP, not by its age.** The
+> 1.5 s wall-age gate is gone outside the hold: a consumed curve is not wrong
+> for being old, only for disagreeing with what the ship did.
+> `_swap_ready_result` evaluates the new curve at `world.time`
+> (`_curve_state_at`, the Hermite of `preview.state_on_curve`) and rejects it
+> only when its velocity error is above `velocity_invalidation_abs_tol` AND
+> not smaller than the shown line's (`_line_check`, its first samples kept
+> unconsumed). That rejects the jobs still in flight when the key is released
+> (they assumed thrust that never came) without ever making the display
+> worse than keeping the old line.
+
+> **The apsis scan's pass 1 is a function of the point, not of its index.**
+> The reference body's position comes from a Lagrange cubic over knots on a
+> FIXED absolute time grid (`apsis._ref_grid_step_numba`, ≤ `REF_GRID_TOL_M`
+> 1 m; a fixed body skips it; a grid under `REF_GRID_MIN_STEP_S` is solved
+> per point, chosen per body, never per point list). So the worker computes
+> `d²` for its curve (`_apsis_d2_numba`, result `apsis_d2`), and after
+> consuming, the main thread slices it (`_apsis_d2_for`, head recomputed,
+> written into the consumed row like the points themselves). Pass 1 on a
+> 40 000-point Sonne-referenced line: 6.31 → 0.50 ms; markers within 1.9 m of
+> the old linear-window form (Erde reference 20 m). The old form picked its
+> windows from the point indices, so the same point got a different `d²`
+> after consumption: `tests/apsis_stability_test.py` spread 1.0e1 → 0 m.
+>
+> **Main-thread rules that came with the higher swap rate** (38 % of frames
+> instead of 2 %): `_advance_points_along_curve` writes the head into the row
+> before the remaining samples and takes a view, never a 1.6 MB copy;
+> `_count_recomputed_points` runs only when its debug print is on (1.5 ms per
+> swap otherwise); the worker reports `tangents_ok`; `os.cpu_count()` is read
+> once. `Predictor.update` under an executor burn at 256×: 0.57 ms per frame.

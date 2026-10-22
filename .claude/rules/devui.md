@@ -1,6 +1,7 @@
 ---
 paths:
   - "spacesim/ui/devui.py"
+  - "spacesim/runtime/ship_debug.py"
 ---
 
 # Developer tools (`ui/devui.py`, F1)
@@ -17,6 +18,11 @@ paths:
   The **Timing** header graphs the same four series as the `TIMING:` print line
   — `TimingHistory` is a `(5, capacity)` float32 ring buffer, one contiguous row
   per series, handed straight to `imgui.plot_lines` with `values_offset`.
+  A **Screenshot (F12)** button sits above the headers, with a
+  "screenshot settings" tree under it (resolution, width crop, overlay; see
+  the F12 note in `.claude/rules/camera-input.md`), and the **HUD visibility** header draws
+  one checkbox per entry of `ui/hud/visibility.py` (`HUD_ELEMENTS`,
+  `WORLD_OVERLAYS`) plus "hide all" — see `.claude/rules/hud-ui.md`.
 
 > **The timing buffer is filled every frame, not only while the panel is open.**
 > `DevContext.sample_timings()` is called from `runtime/loop.py` unconditionally, right
@@ -46,3 +52,26 @@ paths:
 > point it at the newest and the graph runs backwards while still looking
 > plausible), stats over a partially filled buffer, `resize` keeping the newest
 > samples, and the 20 µs ceiling on `sample_timings`.
+
+## Ship debug (`runtime/ship_debug.py::ShipDebugTools`)
+
+The **Ship debug** header holds two actions; the logic lives in
+`runtime/ship_debug.py` (no ImGui, no GL), the panel only draws sliders.
+
+- **Bahn setzen**: body, periapsis altitude over the mean radius, `e`,
+  periapsis direction, retrograde. Two-body state AT the periapsis
+  (`v_p = sqrt(mu (1 + e) / r_p)`, radial speed 0) plus the body's velocity
+  from `SurfaceSystem.body_velocity` (scripted bodies store 0). Warns when the
+  periapsis is in the air or the apoapsis leaves the Laplace SOI. Measured
+  after 240 frames around the Mond: pe 50 000 m, e 0.3000, as set.
+- **Landen**: body, sun angle, offset, "ebenste stelle suchen". Refused on
+  gas giants, stars and holes. **`SurfaceSystem.land_at` alone clips**: it
+  lifts the centre over the terrain under the CENTRE, and the 16 m stern
+  stands on a slope. Measured over 400 longitudes: up to 11.7 m (Mond),
+  5.4 m (Erde) of hull inside the ground. `clear_center_radius` samples the
+  hull outline every 0.5 m (the finest terrain wave is 4 m) and lifts the
+  centre until every point clears its own longitude by 2 cm; measured 0.0
+  over the same 400, and -0.020 m after 120 real frames on four bodies.
+- Both reset what hung on the old state: landing and contact flags, an armed
+  burn, the node plan, WARP TO, the snap; they set the reference body, follow
+  the ship and drop the held prediction (`surface.event_serial`).

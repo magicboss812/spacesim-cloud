@@ -75,6 +75,10 @@ Two independent causes of soft, ghosted labels, both fixed 2026-08-15:
    `Renderer._deferred_labels` and drawn in `render()` **after**
    `_apply_fxaa`, where the ship and apsis labels already were.
 
+Bodies get the same treatment: in the pixel style they are composed into
+their own window-size layer, blitted after `_apply_fxaa`, and their markers
+are deferred until after it (`.claude/rules/body-art.md`, "Pixel bodies").
+
 ## The renderer no longer swaps buffers
 
 `Renderer.render()` draws the world and stops; `Renderer.present()` does the `pygame.display.flip()` and fills in
@@ -106,6 +110,47 @@ The lower clamp is 1.0 on purpose: below the reference height nothing shrinks, i
 only grows on larger displays. Use `Renderer.ui_px(design_units)` to convert.
 Fonts are **re-rasterised** at the new pixel size on every scale change
 (`_rebuild_fonts`) rather than stretched, so text stays sharp at any resolution.
+
+## High-resolution capture draws the WINDOW's picture at k× pixels
+
+`runtime/screenshot.py::render_scaled` (2K–8K) resizes renderer, camera and
+HUD by `k = target height / window height`, points
+`Renderer.output_framebuffer` at an offscreen FBO (`render()` uses it in place
+of `ctx.screen`, after the FXAA pass too) and sets `Renderer.capture_scale =
+k`, then restores all of it. Three rules follow; the second and third were
+seen in the first 4K/8K shots:
+
+- **The HUD scale is SET to `ui_scale × k`** (`resize(..., ui_scale=)`), not
+  derived from the height: `ui_scale_max` (3.0) would clamp it and the HUD
+  would shrink relative to the picture at 8K.
+- **Anything that compares `camera.scale`-derived pixels against a pixel
+  threshold divides by `capture_scale`.** At k× scale the orbit is k× larger
+  in pixels, so the apsis-label fade (`render/prediction.py`, `size_px`) went
+  fully opaque in the 4K shot. It and the ship's zoom shrink
+  (`_ship_zoom_shrink_factor`, same shape) read window pixels.
+  `glLineWidth` is multiplied by `capture_scale` in `_set_line_width`.
+- **The background layer is stateful and is NOT updated during the capture**
+  (`render/background_draw.py`): the k× scale looked like a zoom to its
+  idle-fade, the grid faded in, and it stayed visible in the window after
+  the capture. Levels are picked at `camera.scale / k`, spacing and star pan
+  are multiplied by k.
+
+Not compensated on purpose: body disc/icon thresholds and the line-detail
+budget see the larger pixel radius and draw more detail, which is what a
+higher resolution is for.
+
+## The GL context is 3.3 CORE, forward-compatible, on every platform
+
+`runtime/window.py` requests it before `set_mode`. macOS without the request
+hands out a 2.1 legacy context and every `#version 330` shader fails; asking
+for it everywhere means Windows/Linux run the same rules the Mac does.
+Measured under Mesa: core vs. the old compatibility context renders a
+**bit-identical** frame (0 of 1.44 M pixels differ), 0 GL errors over 80
+frames with a maneuver node. If the driver refuses, non-macOS falls back to
+the default context. **macOS core allows line width 1.0 only**, so
+`_set_line_width` sets 1.0 there; `orbit_line_width` (1.6) and the F12
+multiplier have no effect on a Mac. Thicker lines there would have to become
+quads.
 
 ## `render/renderer.py`
 
@@ -232,8 +277,9 @@ Fonts are **re-rasterised** at the new pixel size on every scale change
 >    still write every change, so the output is unchanged. `resize()` calls
 >    `_invalidate_gl_state_cache()` — `u_viewport` hangs off the window size,
 >    and that is the one value the cache would otherwise be stale about.
->    `ui/text.py::_blit` does the same for its two uniforms and drops the
->    cache in `resize()`.
+>    The HUD's text no longer writes per-label uniforms at all: it is part of
+>    the instanced UI batch (`.claude/rules/hud-ui.md`, 2026-09-29). Per frame
+>    **261 → 120** uniform writes and **190 → 80** GL draws.
 > 2. **Texture pooling.** The expensive part of a *new* label is not the
 >    rasterising but the GL allocation — measured **~0.3 ms per
 >    `ctx.texture(...)`**, and the labels that carry a number (speed,
@@ -241,19 +287,43 @@ Fonts are **re-rasterised** at the new pixel size on every scale change
 >    textures almost always fit the next one, since a digit more or less does
 >    not change the line height, so they are collected by size and refilled
 >    with `write()` instead of released: `Renderer._acquire_label_texture` /
->    `_retire_label_texture` (cap 64) and the same pair in `ui/text.py`
->    (cap 96). **A font rebuild must drop the pool** — those textures carry
->    the old size and none of them fits any more.
+>    `_retire_label_texture` (cap 64) for the world labels. The HUD's
+>    `ui/text.py` keeps its labels in one atlas instead and writes new ones
+>    into a freed slot; its pool (cap 96) serves only the oversize fallback.
+>    **A font rebuild must drop the pool** — those textures carry the old
+>    size and none of them fits any more.
 >
-> The Ap/Pe diamonds are four unconnected strokes drawn through
-> `_draw_line_segments` (`GL_LINES`). They used to be batched one draw per
-> colour, but **each marker now carries its own alpha** (`_draw_apsis_markers`
-> fades it by the orbit's on-screen size — `dist·camera.scale`, the apsis radius
-> in pixels — between `apsis_marker_fade_min_px` and `_full_px`, so Pe/Ap don't
-> stack onto the ship/Erde markers when the conic is small on screen). That is
-> one draw per marker again, which is fine: real orbits show 1 Pe + 1 Ap, rarely
-> two each. The label fades with it via `_blit_text_topdown(..., color=)` →
-> `texquad.frag`'s `u_color` alpha.
+> **The Ap/Pe marker is a chamfered plaque on the pixel grid**
+> (`_draw_apsis_glyph`, 2026-10-14; it was a four-stroke diamond). An
+> axis-aligned square with 45° chamfers, half edge
+> `ui_px(apsis_marker_radius_px)` rounded to whole px (5 → 10×10 px at
+> 1280×800, 14×14 at 2560×1440), filled triangles through
+> `_draw_ortho_shape`, no `GL_LINES`. Ap and Pe differ three ways so it
+> reads without colour vision: colour (`ui.theme.apsis_rgb`, cyan / amber,
+> the plan's tinted toward green), chevron direction (▲ highest, ▼ lowest)
+> and fill (Ap a dark panel-ground plate with a coloured frame, Pe a solid
+> plate with a dark chevron). Two draws per marker plus the label.
+> **Straight edges sit on whole coordinates, 45° edges half a pixel off
+> them**: a diagonal with an integer intercept runs through pixel centres
+> and the rasterizer's tie rule then cut one chamfer a step shorter than
+> its mirror (measured on the first version). The half edge is also the
+> published hit radius, so tooltip and hover use what is drawn.
+>
+> **Each marker carries its own alpha** — `_draw_apsis_marker_rows` fades it
+> by the orbit's on-screen size (`dist·camera.scale`, the apsis radius in
+> pixels) between `apsis_marker_fade_min_px` and `_full_px`, so Pe/Ap don't
+> stack onto the ship/Erde markers when the conic is small on screen. The
+> label fades with it via `_blit_text_topdown(..., color=)`.
+>
+> **It is not 1 Pe + 1 Ap.** The default parking orbit fits ~8 revolutions
+> into the horizon (16 markers per frame). The plaque is opaque, so the rows
+> are drawn in **reverse** time order (the next apsis lands on top, label
+> after its own plaque), and a marker within half an edge of an earlier one
+> of the same kind is not drawn at all: on a 700 m/s eccentric orbit the 8
+> revolutions of each apsis lie 0.3 px apart and the hidden frames stuck out
+> around the top one. Hits are still published for every marker, in time
+> order. For a screenshot of the plain glyph, `tools/game_shot.py --horizon
+> 1.1e9 --dv 700` draws exactly one revolution.
 
 ## `render/gl/`
 
@@ -261,7 +331,8 @@ Fonts are **re-rasterised** at the new pixel size on every scale change
 y flipped in the vert shader), `ortho.vert` (bottom-up ortho convention —
 ship arrow, debug crosses; replicates the old fixed-function
 `gluOrtho2D(0,w,0,h)` mapping), `texquad.{vert,frag}` (textured quads for
-labels/HUD, ortho convention), `ui_rect.{vert,frag}` (the UI SDF shader).
+world labels, ortho convention), `ui_rect.{vert,frag}` (the UI SDF shader,
+plus a `texelFetch` branch that draws HUD text from the label atlas).
 `body_surface.{vert,frag}` + `body_line.{vert,frag}` draw the procedural
 body art (see `bodies/style.py`). FXAA lives inline in `render/renderer.py`.
 
@@ -270,7 +341,7 @@ body art (see `bodies/style.py`). FXAA lives inline in `render/renderer.py`.
 > baking the colour into `font.render` would put it in the cache key and
 > give every hover state its own GL texture. **GL initialises uniforms to 0,
 > so a caller that skips `u_color` draws nothing.** Both call sites
-> (`Renderer._draw_texture_ortho`, `ui/text.py`) always set it.
+> (`Renderer._draw_texture_ortho`, `ui/text.py::_blit`) always set it.
 
 > `ui_rect.frag` is one SDF that covers ~90% of the UI: rounded rects with
 > per-corner radii, borders, drop shadows, vertical gradients — plus
@@ -280,13 +351,69 @@ body art (see `bodies/style.py`). FXAA lives inline in `render/renderer.py`.
 > distance and `smoothstep(±0.5)` gives an exactly 1px antialiased edge
 > without `fwidth` and without depending on viewport size.
 
+## The prediction line has six styles (`render/prediction_pixel.py`, 2026-10-15)
+
+`renderer.prediction_line_style`: `klassisch` (the old smooth GL line, now in
+`prediction_line_color` with its own width/alpha), `kontur` (default; 2-px band,
+1-px dark edge), `perlen` (2×2 beads on a 1-px thread), `lineal` (1-px line,
+time ticks), `halbton` (coverage falls with look-ahead, ordered dither),
+`schiene` (3-px two-tone rail, arrowheads in flight direction). Settings per
+style in `prediction_line_styles`, dev UI **Prediction line**. The sampling
+chain above is untouched; the style only replaces the final `_draw_polyline`
+loop, so `prediction_projection_test` still pins the runs at 0 px.
+
+- **Two passes, MAX blending.** Segments (instanced quads) and marks write
+  channels into a window-size buffer (r line, g dark edge, b rail, a mark
+  colour); the fragment tests the PIXEL CENTRE's distance to the segment, so
+  bands are hard pixels. Adjacent segments overlap at every joint; with alpha
+  blending the joints showed darker (edge over edge) and brighter spots. The
+  compose then layers edge → rail → line → mark onto the frame.
+- **Time per vertex comes from the projected dense curve**
+  (`_pred_time_src`, stored by `_adaptive_prediction_screen_points`); the runs
+  after clip/RDP carry none. `_map_run_times` walks it monotonically and
+  starts each run at the FIRST source segment within 1 px from the cursor,
+  never the nearest overall: a multi-revolution line crosses itself.
+- **Marks sit on multiples of ABSOLUTE time** (`_pred_crossings`), so they
+  stand on the orbit and the ship moves past them; counted from the ship they
+  would crawl along the line every frame. Measured against the Hermite
+  position at the mark's time: max 0.014 px at 6e-6, 2e-5 and 1e-4 px/m. The
+  step comes from a ladder of round values (1 s … 100 a) for a minimum spacing
+  at the 20 % quantile of the screen speed, with hysteresis 0.85–3.2 × the
+  minimum (the ladder steps ≤ 2.5×, so no value pair can alternate).
+- **The dither counts in curve coordinates** (arc length from an
+  absolute-time anchor, distance across), not screen pixels: a following
+  camera shifts the line on screen every frame and a screen-anchored pattern
+  would crawl over it.
+- **Segments are thinned to ~3 px** (`_pred_thin`). The runs are refined for
+  the smooth line to 0.58 px per segment (2e-5 px/m); as quads each pixel was
+  shaded ~10×. 3643 → 710 segments, pass 4.9 → 2.8 ms (llvmpipe). Chord error
+  at 100 px curvature radius 0.011 px. Marks use the full run.
+- **Compose and clear run over 16-px tiles** the line touches, not its
+  bounding box (nearly the screen when zoomed in). `_pred_tiles` takes every
+  tile of the square ±pad around each support point; the first version took
+  only its four corners, which skips the point's own tile once pad > 8 px.
+  At window size pad is 4–6 px, so it only showed in F12 captures (k = 2.7,
+  pad 12 px): whole stretches of the line missing, 58 of 610 segments.
+- Cost of `draw_prediction` (1280×800, llvmpipe, `gl.finish()`): klassisch
+  1.7–2.1 ms, styles 2.9–4.5 ms; about 1 ms of the difference is Python + GL
+  calls, the rest software rasterisation.
+- The GL fields `_pred_*` are created by `_init_prediction_pixel_pipeline`
+  inside `_init_opengl`, which runs BEFORE the attribute block of
+  `Renderer.__init__`: defining them there again set the VAO back to None.
+- Harness trap: under `xvfb-run` the default screen is 1280×1024, so the line's
+  top-down coordinates sit 224 px off rows read with `gl.screen.read(viewport=
+  (0, 0, 1280, 800))[::-1]`. `_world_to_screen_xy_at_time` agrees with the
+  runs; only the readback is shifted.
+
 ## The ship is drawn in SCREEN pixels, not world geometry
 
 `_draw_ship_sprite` draws `ship/art.py` geometry — at a true scale the ship
-would be sub-pixel at every playable zoom. `_ship_length_px()` is the single
-source for that size (`renderer.ship_length_px` design units ×
-`renderer.ship_render_scale` × the zoom shrink) and every path — sprite, arrow
-fallback, label offset — goes through it.
+would be sub-pixel at most zooms. `_ship_length_px()` is the single
+source for that size and every path — sprite, arrow fallback, label offset —
+goes through it: `max(_ship_sprite_length_px(), surface.ship_length_m ×
+scale)`, the sprite being `renderer.ship_length_px` design units ×
+`renderer.ship_render_scale` × the zoom shrink. Past the true size the ship
+grows with the zoom and fades into the 3D ship (`.claude/rules/surface.md`).
 
 The size is therefore *nearly* zoom-independent: flat down to
 `ship_zoom_shrink_start_scale` (camera px per metre), then ramping to

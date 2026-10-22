@@ -119,6 +119,17 @@ Die Klammer (`STAR_PAN_CLAMP_FRAC`, 6 % der Diagonale je Bild) bleibt als
 reine Notbremse; das Geschwindigkeitsmodell erreicht sie im Normalbetrieb
 nicht.
 
+> **Die Drift ist gedeckelt: `star_max_speed_px` (30), weich.** Linear bis
+> `STAR_SPEED_KNEE_FRAC` (0.6) davon, darüber `tanh` gegen den Deckel, im
+> Knie mit Steigung 1 (`star_speed_factor`). Im Schlund-System fliegt der
+> Kundschafter mit 41 574 km/s; linear wären das bei 0.25 rund 10 400 px/s,
+> gemessen im Spiel **5436 px/s Median** (die Notbremse), mit Deckel
+> **30.0 px/s**. Das Sonnensystem liegt ganz im linearen Teil: Schiff
+> 8.8 px/s mit und ohne Deckel, Erde bit-gleich (§4e). Die Sterne sind ein
+> Bewegungshinweis, keine Parallaxe — echte Sterne stehen bei jeder
+> Bahngeschwindigkeit still. Nur die Eigenbewegung ist gedeckelt; der
+> Schwenk der freien Kamera nicht.
+
 ## Das atmende Feld
 
 Beim Hineinzoomen soll das Feld mitzoomen, ohne beim Herauszoomen zu
@@ -323,7 +334,10 @@ gerundet" ist. Nebeneinander las sich das als zwei verschiedene Produkte.
 
 - **Virtuelles Pixelraster.** Der ganze Fragment-Pass rechnet auf
   `(floor(frag/px) + 0.5) * px` mit `px = ui_px(pixel_size)` — also in
-  Design-Einheiten, wie jede andere UI-Größe. Alle Kanten sind `step`, nicht
+  Design-Einheiten, wie jede andere UI-Größe. `pixel_size` steht auf **3.0**: genau
+  die kleine Körperzelle (`renderer.body_pixel_size_small`) und die Hälfte
+  der großen. Zwei unverwandte Raster nebeneinander lesen sich als Versehen
+  (`.claude/rules/body-art.md`, "Pixel bodies"). Alle Kanten sind `step`, nicht
   `smoothstep`: hier wäre die weiche Kante der Fremdkörper, nicht der
   Treppeneffekt. Auch die Sterne rasten Position und Größe darauf ein.
 - **Fase statt Rundung** (`ui/theme.py`). Die Knoten sind darum
@@ -362,10 +376,10 @@ gerundet" ist. Nebeneinander las sich das als zwei verschiedene Produkte.
 
 Die Attribute von `BackgroundLayer`, die Schlüssel des `background`-Abschnitts
 in `config.json` und die Regler im Dev-UI-Header `Background` sind **dieselbe
-Menge** (14): `enabled`, `grid_enabled`, `stars_enabled`, `accent_color`,
+Menge** (15): `enabled`, `grid_enabled`, `stars_enabled`, `accent_color`,
 `grid_opacity`, `grid_anchor`, `grid_max_speed_px`, `idle_fade_delay`,
 `pixel_size`, `pixel_round`, `star_density`, `star_opacity`,
-`star_motion_scale`, `star_zoom_influence`. §7 prüft alle drei gegeneinander.
+`star_motion_scale`, `star_max_speed_px`, `star_zoom_influence`. §7 prüft alle drei gegeneinander.
 Laufzeitzustand (`star_pan_px`, `grid_anchor_m`, `grid_lag_px`, `grid_fade`,
 `time_s`, `star_zoom`) gehört ausdrücklich nicht dazu — und §7 hat genau das schon
 **zweimal** gefangen, als ein neues Zustandsfeld die Ausnahmeliste nicht
@@ -384,7 +398,22 @@ Median). Optimiere gegen `frame`, nie gegen `background_ms` — dasselbe Prinzip
 wie in `.claude/rules/rendering.md` unter „Frame timing — read the labels
 literally".
 
+## Geteilter Durchgang für die Linse eines schwarzen Lochs
+
+`u_pass` in `background.frag`: `0` alles (Normalfall); `1` nur Schwarz, dann
+die Sterne, dann die Linse (`render/blackhole.py`); `2` Grund, Gitter und
+Vignette **additiv** darüber (`_draw_background_ink`). So verbiegt die Linse
+nur die Sterne. Additiv statt darunter: der Grund ist fast schwarz, ein Stern
+wird um höchstens `#04070c` heller. Nur Gitter, Linse an gegen aus:
+**0 Pixel** anders (`tests/blackhole_test.py` §10).
+
 ## Fallstricke
+
+> **Beim hochaufgelösten Foto läuft `update()` nicht** (`capture_scale != 1`,
+> siehe `.claude/rules/rendering.md`). Der k-fache Maßstab sah für die
+> Zoom-Ruhe wie ein Zoom aus: das Gitter blendete auf und blieb danach im
+> Fenster stehen. Gezeichnet wird der Zustand des Fensters, Dekaden bei
+> `scale / k`, Pixelweiten und Sternversatz mal k.
 
 > **`u_level_phase` ist ein `vec2`-Array — moderngl will eine Liste von
 > PAAREN.** Eine flache Liste wirft `Value after * must be an iterable, not

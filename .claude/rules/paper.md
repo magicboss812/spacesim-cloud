@@ -8,8 +8,7 @@ paths:
 Ein **Obsidian-Vault**, Stand: im Schreiben. Vault-Wurzel ist `spacesim/docs/`
 (dort liegt `.obsidian/`), deshalb sind Wikilinks wurzelrelativ:
 `[[Obsidian Vault/Evaluation/Integrator.md]]`, nicht `[[Integrator]]` von
-`_Arbeit/` aus. `docs/` ist im `spacesim`-Repo **ungetrackt** (`?? docs/`) —
-die Git-Regel aus `CLAUDE.md` gilt auch hier.
+`_Arbeit/` aus. `docs/` ist im Repo getrackt — die Git-Regel aus `CLAUDE.md` gilt auch hier.
 
 **Die Abgabe ist deutsch.** Jeder Satz, der in `_Arbeit/` landet, ist deutsch —
 egal in welcher Sprache der Nutzer mit mir redet oder die Quelle geschrieben ist.
@@ -33,10 +32,10 @@ Kurz: `_Arbeit/` = Abgabe, `Quellen/` = Belege, `Evaluation/*.md` = Rohmaterial.
 | `Readme's Github/` | datierte Entwicklungsberichte (März–Juni 2026) | Material für das Entwicklungskapitel; beschreibt den Code **zu diesem Datum** (`test.py`, pyopengl) — nie als aktuellen Stand zitieren |
 | `Plan für SpaceSim.md`, `Planumsetzung/Plan für SpaceSim.md` | Feature-Pläne; **zwei abweichende Kopien** | nur lesen |
 | `logbuch bis 11.03.2026.docx` | LogBuch der Anfangsentwicklung (KI-Prototyp) | Material für das Entwicklungskapitel; `~$…docx` ist Words Sperrdatei |
-| `Claude MD Kopie/` | veralteter Schnappschuss von `CLAUDE.md` + Rules | **weder lesen noch pflegen** — die echten liegen in `Werk/` |
+| `Claude MD Kopie/` | veralteter Schnappschuss von `CLAUDE.md` + Rules | **weder lesen noch pflegen** — die echten liegen in der Repo-Wurzel (`CLAUDE.md`, `.claude/rules/`) |
 
 Ignorieren: `.obsidian/`, `.trash/`, `.makemd/`, `.space/`, `.claudian/`,
-`docs/.claude/` (leer), `Tags/`, `__pycache__/`.
+`spacesim/docs/.claude/` (leer), `Tags/`, `__pycache__/`.
 
 ## Quellen lesen
 

@@ -21,6 +21,19 @@ paths:
   Earth / plus Moon) and answers whether a symplectic integrator could help
   here at all.
 
+- **`landing_test.py`** — pure, headless (`.claude/rules/surface.md`).
+  Terrain closes at 2π and is rougher close up; `rotation_angle` exact over a
+  sidereal day; the drag kick equals `v0/(1 + k v0 dt)` to 1e-6 and does
+  nothing above the atmosphere; a parking orbit with and without
+  `world.surface` is bit-identical; a soft lunar touchdown stands at ground +
+  50 m and turns with the Moon through 6 h of warp; thrust below g stays,
+  above lifts off; 300 m/s into Erde crashes and respawns into the start
+  orbit; warp limit free when landed, real time in the air, braked on a
+  plunge, unchanged on an orbit above the air. §10 the launch site: plateau
+  0 / ramp 15 / deck 30 m, natural terrain bit-identical away from it, start
+  on the deck, an hour of warp standing, liftoff and a 3 m/s touchdown back
+  on the deck (a free fall from 20 m crashes at 26 m/s, as it should).
+
 ## Predictor and time warp
 
 - **`warp_predictor_test.py`** — the big one. Covers the prediction horizon
@@ -32,10 +45,10 @@ paths:
 
   | § | asserts |
   |---|---|
-  | 9 | thrust does not block the main thread — `update()` inside the frame budget under sustained thrust, the line neither emptied nor frozen, settling back to the coasting noise floor after burnout |
-  | 10 | the body-placement memo is bit-identical to the un-memoised path (5 configurations, incl. a two-link moon chain) |
+  | 9 | thrust does not block the main thread — `update()` inside the frame budget under sustained thrust, the line neither emptied nor frozen, settling back to the coasting noise floor after burnout; since the latency compensation (2026-09-30) the line under thrust stays within 3× the coasting noise (measured 6.5e3 against 2.1e5 m; it used to trail by a multiple) |
+  | 10 | the body-placement memo is bit-identical to the un-memoised path (5 configurations, incl. a two-link moon chain; grouping and planet table set to 0, config turns both on); far-moon grouping at factor 300 stays under 1 m, factor 0.03 moves the line >100× that (counter-check); the planet table at 1e-15 m/s² stays under 1 m and is not bit-identical (0.34 m is step-control noise; a LEO line cannot see the table even at 1e-5) |
   | 11 | Ap/Pe markers land on an analytic e=0.5 ellipse's radii (8.0002e6 vs 8.0e6, 2.4002e7 vs 2.4e7) |
-  | 12 | the thrust pipeline never swaps a result backwards — strictly ascending job ids *and* strictly increasing snapshot velocity |
+  | 12 | the thrust pipeline never swaps a result backwards — strictly ascending job ids *and* strictly increasing snapshot velocity; depth 3 refreshes ≥ 1.4× depth 1 *or* already ≥ 85 % of the frame rate (since 2026-09-30 one default-horizon compute is shorter than a frame: 137/s → 153/s at 154 fps) |
   | 13 | thrust is detected near periapsis but not while coasting or under warp (12/12 and 0/12 at four points; 0/6 under a 7 d/s step) |
   | 14 | swap pacing produces no double-steps |
   | 15 | the far-field step ceiling costs the same at periapsis as at apoapsis (fails at 5.80 against the old code) |
@@ -74,7 +87,9 @@ paths:
   the old rigid shift was off by), the point list neither growing nor shrinking
   as its synthetic head is prepended and stripped, a shifted time column not
   displacing the reference body, and the warp hold not getting worse from
-  sharing the mechanism.
+  sharing the mechanism. §1 spread is **0.000e+00 m** since the scan's pass 1
+  runs on a fixed time grid (was 1.0e1 m: the old windows followed the point
+  indices, `.claude/rules/predictor.md` → "Long horizons").
 - **`horizon_targets_test.py`** — the pure length rule of the HUD horizon
   slider: §1–3 `test.horizon_targets()` against `predictor_horizon_lengths`
   (grabbing pins the computed length at the ceiling, `drawn` follows the knob),
@@ -127,6 +142,47 @@ paths:
 
 ## Rendering and UI
 
+- **`blackhole_test.py`** — `render/blackhole_tables.py` against theory and the
+  lens pass against pixels. Weak-field deflection to third order (4.1e-5, with
+  a counter-check that second order misses by 1.0e-3); the n=1 lensing ring
+  ends at b = 3.083 r_s = 6.17 M (Gralla, Holz & Wald 2019); Beloborodov's
+  sqrt(r²+r) within 0.06 % of the exact r1; flux peak at 49/36 r_in; disk
+  phase capped per frame and frozen under pause. GL: shadow radius
+  3√3/2 r_s (7.36 px measured against 7.79 at 3 px/r_s, AA edge), lensing
+  changes 20 % of the pixels between disk and 1.3 R_E and **0** beyond the
+  quad; switched off, no shadow; a system without a hole builds no table.
+  §9 the pixel style: no scene copy, 39 % of the shadow circle black (the
+  near disk crosses its middle), major axis at 13.7° for a 14° roll
+  (counter: roll 0 → −1.3°), elongation 1.49 (counter: face-on 1.01), the
+  approaching side 2× brighter (counter: spin −1 swaps the sides), 223 px
+  change over 5 s and **0** in a pause, 41 % equal horizontal neighbours
+  against 2 % for the smooth lens view (soft glow off: it is soft on
+  purpose). §10 glow and lens: soft glow 0 lone pixels, dithered glow 100 %
+  lone pixels, none without either; the lens leaves a grid-only background
+  unchanged (0 px) and moves 1585 px of a stars-only one. §11 a camera on
+  a 26 r_s orbit at 2000 px/r_s (deep inside the lens, hole screens away):
+  a step along the orbit changes 26 px with the lens, 26 without, and the
+  background is not split (counter: the full world shift, 592 px). §7 pins its own
+  R_E 32 / disk 18, the values its regions were measured with.
+- **`inset_test.py`** — the preview box (`render/inset.py`). A sphere for
+  Erde, Mond, Jupiter, Sonne (90–100 % of the sphere area lit, 0 % without a
+  selection); `inset.mode = "off"` leaves the box pixel-identical and the ship
+  gets a box (§9); the kind labels incl. `MOND VON Erde`; held still at
+  `real_dt = 0` (0 px), turned after 0.5 s (1076 px); 100 % uniform
+  2×2 blocks; Erde's tiers ascending to 1.0, dark → light, none equal to the
+  body colour; the bright half on the side of `_body_light_dir`. §7 stars
+  dimmed (brightest 327 of 765), 209 px drift after 2 s, 0 px at
+  `star_speed = 0`; §8 moons: Erde 1, Jupiter 4, Sonne 0, Mars 0; switched
+  off 1272 px fewer; radii 1.40 → 2.25 inside the 2.53 half width; at time 0
+  each moon on its true angle (deviation 0). §9 the ship: each of the five
+  builds draws a body and no two match; the Original's hull section is
+  round (height at 0.7 r = 0.75 of the axis, circle 0.71, plate 1.0;
+  width at half height 28 against 26.3); `hull = #c03020`
+  turns ~1800 px red and the default restores the box exactly; with the
+  light off a theta change moves 0 px (counter: ~5600 with light); idle has
+  0 fire px behind the stern, full thrust ~1200; the shake takes ≥ 3 whole-px
+  offsets, none without thrust, and the frame lines change 0; the stars
+  move against the nose, 8.0× faster at full thrust.
 - **`render_budget_test.py`** — §1 pins the frame-timing attribution
   (`frame_ms` = `render()` itself, `overlay_ms` separate) with a counter-check
   that the old arithmetic swallowed the gap; §3 pins that nothing is allocated
@@ -149,7 +205,11 @@ paths:
   velocity field still moves the stars, that dividing by *sim* time keeps
   1 d/frame identical to 1 s/frame under warp, and that a focus change re-seeds
   instead of reading 1e11 m as a flight (counter-check: read as a flight it
-  saturates the clamp at 90.6 px). §4b the breathing
+  saturates the clamp at 90.6 px; that counter-check runs with
+  `star_max_speed_px = 0`, since the cap would hold it to 0.5 px). §4e the
+  drift cap: Erde bit-identical with and without it (7.4450 px/s), 41 574 km/s
+  at 30.00 px/s (counter: 5434 px/s uncapped), monotonic over six decades,
+  slope 1.000000 at the knee. §4b the breathing
   field — expected visible star count varies under 3 % over eight octaves, the
   fade window is exactly zero at *both* octave edges, and `amount = 0`
   reproduces the rigid field exactly. §5 the idle fade, §6 grid phase at 1e11 m
@@ -215,9 +275,16 @@ paths:
   pixel face rasters to exactly two alpha values and snaps onto the five-pixel
   ladder at every `ui_scale`, with a non-zero-fringe counter-check on the text
   face.
+- **`screenshot_test.py`** — pure maths of `runtime/screenshot.py`: the
+  2K–8K steps are heights with the width following the window, the crop
+  clamps to 0..1 and `CROP_MIN_FRACTION`, "snap to centre" keeps the width,
+  "symmetric" mirrors about 0.5. The offscreen re-render itself needs GL and
+  is checked through `runtime.loop.run` (F12 note in `camera-input.md`).
 - **`ui_hud_test.py`** — orbital elements against analytically known orbits,
   layout/overlap at real window sizes, and that controls actually move
-  simulation state. §8 opens the body drawer and runs the unfold out before
+  simulation state. The warp-bar clicks address CELLS: cell 1 is the slowest
+  step, cell 0 the pause (held `sim_dt`, thrust locked, second click
+  resumes). §8 opens the body drawer and runs the unfold out before
   clicking a row. §10: the attitude ring rejects all four corners of its square
   and the throttle arc's 4/50/96 % points route to `NavballCluster` (with a
   counter-check that the 96 % point really lies inside the ring's rect). §11:
@@ -388,25 +455,36 @@ Sieben dateien, von rein rechnend nach GL geordnet. Alle **gruen** gemessen
 
 ## Known pre-existing failures — not regressions
 
-**Drei dateien laufen seit der umstrukturierung (2026-09-03) gar nicht mehr
-an** — sie tragen die alten flachen pfade:
+**Zwei dateien laufen seit der umstrukturierung (2026-09-03) gar nicht mehr
+an** — sie tragen die alten flachen pfade (`background_test.py` ist seit
+2026-10-20 nachgezogen: `config/solar_system.json`, `config/config.json`,
+`ui/devui.py`, und laeuft wieder gruen):
 
 - `energy_test.py` — `from vec import Vec2`; das modul heisst jetzt
   `physics.vec`.
 - `hamiltonian_diag.py` — `from vec import Vec2, vec`, dieselbe ursache. Es
   ist ohnehin ein diagnose-skript, kein test mit pruefungen.
-- `background_test.py` — liest `spacesim/solar_system.json`; die datei liegt
-  jetzt unter `config/solar_system.json`.
-
-Alle drei brechen mit `ModuleNotFoundError` bzw. `FileNotFoundError` ab, bevor
+Beide brechen mit `ModuleNotFoundError` bzw. `FileNotFoundError` ab, bevor
 irgendetwas geprueft wird. Das ist kein befund ueber den code, den sie
 pruefen sollten — wer sie braucht, muss zuerst die pfade nachziehen.
+
+`body_style_test.py` §8 "und kosten entsprechend wenig" (budget 4 ms) gives
+5.5–6 ms here with the pixel bodies on (2026-10-14), against 1.0–1.1 ms
+before. It times `render()` on the CPU, and in llvmpipe that includes the
+per-pixel compose of `body_pixel.frag` (about +2 to +3 ms for one 200-px
+body, `.claude/rules/body-art.md`). `renderer.body_pixel_size = 0` brings
+back the old number. The rest of the file still passes.
 
 `body_icon_test.py` §5 misst hier **±2.24 % gegen eine grenze von 2 %**,
 reproduzierbar ueber mehrere laeufe (die notiz oben nennt ±0.10 %). Der test
 ruft `renderer._draw_body_icon` direkt auf und geht **nie** durch
 `renderer.render()`, haengt also an keiner der spaeteren zeichen-domaenen.
 
+
+`render_budget_test.py` §1 "gegenprobe: die alte rechnung haette die luecke
+rend_calc zugeschlagen" fails in the cloud container on the untouched tree
+too (measured 2026-09-29: alt 4.577 ms gegen neu 4.638 ms); the cause was not
+investigated. The other checks of §1 pass.
 
 `orbit_lines_test.py` has three **timing budgets** that this machine misses:
 "eine volle neuberechnung unter 5 ms", "ruhiger frame unter 0.20 ms" and "jeder
@@ -442,6 +520,10 @@ Flaky — these come and go between runs of **identical code**:
 - "der puffer haelt die linie nicht auf"
 - "nach brennschluss rastet die linie wieder ein"
 - "tiefe 3 erneuert deutlich oefter als tiefe 1"
+- "die linie wird unter schub nicht geleert", "die vorhersage wird waehrend
+  des brennens erneuert", "unter schub haengt die linie nicht mehr
+  hinterher (latenzausgleich)" — all three failed on the untouched tree
+  2026-10-13 (8 failures there, 4 on the Task 2 tree, back to back).
 
 > **Measured 2026-09-03, three runs across the restructure.** Pre-restructure
 > baseline: **8** failures. Restructured, cold Numba cache: **6**.

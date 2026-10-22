@@ -11,7 +11,7 @@ pip install moderngl pygame numpy numba astropy poliastro imgui-bundle
 cd spacesim && python main.py
 ```
 
-Main folder is `spacesim/`, and it is a **source root, not a package** — every
+Main folder is `spacesim/`, and it is the **source root, not a package** — every
 module imports absolutely from it (`from physics.world import world`), and the
 test files put it on `sys.path` themselves. **The entry point is `main.py`**;
 it only wires `runtime/bootstrap.py` to `runtime/loop.py`. Window is resizable
@@ -30,20 +30,20 @@ it only wires `runtime/bootstrap.py` to `runtime/loop.py`. Window is resizable
 
 ## Module map
 
-Seven topic folders under the source root. **`Renderer` and `Predictor` are each
-ONE class assembled from mixins** spread over their folder — the files below are
-parts of one object sharing one `self`, not separate components.
+Seven topic folders under `spacesim/`; every path here and in `.claude/rules/` is
+relative to it unless it starts with `spacesim/`. **`Renderer` and `Predictor` are
+each ONE class assembled from mixins** over their folder: parts of one object.
 
 | folder | what lives there |
 |---|---|
 | `main.py` | the entry point — 27 lines: config → `bootstrap` → `loop` |
-| `runtime/` | `window` (display/GL/DPI/clock), `gl_device` (FXAA, present, resize), `bootstrap` (builds everything — **the construction order is load-bearing**), `loop` (the frame loop + `TIMING:`), `input` (keymap, click gesture), `system_loader` |
-| `physics/` | `world` (adaptive RKN4, `update_planets`/`update_dynamics`, `step`), `world_kernels` (the Numba fast path, **bit-identical** to the Python reference), `vec` (`Vec2`, `G`), `reference_frames` (Principia-style plot frames; **largest file, 1733**), `kernels/` (the predictor's `@njit` maths: `kepler`, `integrators`, `apsis`, `propagate`) |
-| `bodies/` | `body` (`body`/`schiff` + `kepler_relative_xy()`, the **one** scripted-orbit model), `style`, `icon`, `orbit_lines`. Pure numpy — **no GL here** |
-| `ship/` | `control` (`schiffcontrol`), `camera` (world↔screen, zoom, follow, `sim_dt`/warp), `art`, `horizon` (`HorizonPolicy`), `predictor/` (`core`, `hold`, `compute`, `jobs`, `view`), `maneuver/` (`profile` — **die** brenndauer, `plan`, `preview`, `executor`) |
-| `render/` | `renderer` (the class itself), `pipelines`, `draw`, `text`, and the five draw domains `bodies`/`ship`/`orbits`/`prediction`/`maneuver`; `background{,_draw}`, `line_kernels`, and `gl/` (GLSL 330, reached via `render.GL_DIR`) |
-| `config/` | `loader` (`ConfigLoader`), `config.json` (all tunables), `solar_system.json` (27 bodies + ship `SaturnV`) |
-| `ui/` | the player-facing HUD, plus `devui.py` — Dear ImGui **developer** tools (`F1`), a separate system |
+| `runtime/` | `window` (display/GL/DPI/clock), `gl_device` (FXAA, present, resize), `bootstrap` (builds everything — **the construction order is load-bearing**), `loop` (the frame loop + `TIMING:`), `input` (keymap, click gesture), `screenshot` (F12: 2K–8K offscreen re-render, width crop, PNG on a worker), `warp_to` (WARP TO from a pinned tooltip), `ship_debug` (devui: put the ship into an orbit / land it without clipping), `spawn` (start on the launch pad), `system_loader`, `paths` (where `config/` lives once frozen; the build is `spacesim/spacesim.spec` + `spacesim/.github/workflows/build.yml`, notes in `config-loader.md`) |
+| `physics/` | `world` (adaptive RKN4, `update_planets`/`update_dynamics`, `step`), `world_kernels` (the Numba fast path, **bit-identical** to the Python reference), `vec` (`Vec2`, `G`), `reference_frames` (Principia-style plot frames; **largest file, 1733**), `kernels/` (the predictor's `@njit` maths: `kepler`, `integrators`, `apsis`, `propagate`), `surface` (`SurfaceSystem` on `world.surface`: drag, landing, liftoff, crash, warp limit) |
+| `bodies/` | `body` (`body`/`schiff` + `kepler_relative_xy()`, the **one** scripted-orbit model; `rotation_angle(t)`), `style`, `icon`, `orbit_lines`, `terrain` (fixed procedural ground `h(lam)`, shared by physics and picture), `spaceport` (the Earth launch site: plateau + pad + deck inside `h(lam)`, structures as primitives). Pure numpy — **no GL here** |
+| `ship/` | `control` (`schiffcontrol`), `camera` (world↔screen, zoom, follow, `sim_dt`/warp), `art`, `builds` (five ship builds, colour roles), `inset_model` (a build as height + colour map for the preview box), `plume` (exhaust particles, ship-relative), `horizon` (`HorizonPolicy`), `predictor/` (`core`, `hold`, `compute`, `jobs`, `view`), `maneuver/` (`profile` — **die** brenndauer, `plan`, `preview`, `executor`) |
+| `render/` | `renderer` (the class itself), `pipelines`, `draw`, `text`, and the draw domains `bodies` (+ `body_pixel`, the pixel-style body path)/`ship` (+ `ship_pixel`)/`orbits`/`prediction` (+ `prediction_pixel`, the line's six styles)/`maneuver`; `background{,_draw}`, `line_kernels`, `blackhole` (+ `blackhole_tables`: `is_black_hole` bodies as tilted pixel body or lens), `inset` (the selected body or ship as a 3D preview box), `surface` (near-surface view: ground, sky, day/night, dust), `spaceport` (the launch site's structures, one texel per cell), `ship_close` (ship at true 100 m size in 3D, plasma), `view_rotation` (near a body the view rolls ground-down; `_active_frame()` lives here), and `gl/` (GLSL 330, reached via `render.GL_DIR`) |
+| `config/` | `loader` (`ConfigLoader`), `config.json` (all tunables; loads `solar_system.json`), `solar_system.json` (27 bodies + ship `SaturnV`, each with `rotation_period`), `schlund_system.json` (black-hole system, own `focus_body`) |
+| `ui/` | the player-facing HUD (`hud/visibility.py`: draw-only toggles; `hud/apsis_tooltip.py` + `point_tooltip.py`: pinned tooltips), plus `devui.py` — Dear ImGui **developer** tools (`F1`), a separate system |
 
 ## Where the detailed notes live
 
@@ -55,7 +55,7 @@ touching its files.
 |---|---|
 | `.claude/rules/physics-world.md` | integrator, RKN4 order, kernel bit-identity, **time warp ceilings**, the Kepler body model |
 | `.claude/rules/predictor.md` | the drawn line: horizon vs detail, the warp hold, thrust pipeline, apsis markers, body memo |
-| `.claude/rules/rendering.md` | draw path & line kernels, GL state caches, Y conventions, text/FXAA, ship size, frame timing |
+| `.claude/rules/rendering.md` | draw path & line kernels, GL state caches, Y conventions, text/FXAA, ship size, frame timing; black holes in `.claude/rules/blackhole.md` |
 | `.claude/rules/body-art.md` | `bodies/style.py` + `ship/art.py` — geometry, lighting, detail ladder |
 | `.claude/rules/orbit-lines.md` | die Bahnlinien: Zeitkurve im Plot-Frame, SOI-Bänder, `FrameAffineTable`, faint Volllinie über einen Umlauf, Kreis-Endkappe mit echtem Radius |
 | `.claude/rules/background.md` | Sternenfeld + Gitter: nichts skaliert mit `camera.scale`, Lattice-Parität, Pixelraster & HUD-Palette |
@@ -66,6 +66,7 @@ touching its files.
 | `.claude/rules/devui.md` | the ImGui dev panel and its timing ring buffer |
 | `.claude/rules/config-loader.md` | `config.json` sections, typed accessors, `solar_system.json` |
 | `.claude/rules/tests.md` | what every test file asserts, and the known pre-existing failures |
+| `.claude/rules/surface.md` | terrain, body rotation, drag split, landing/crash, warp limit near ground, the near-surface view and the 3D ship |
 | `.claude/rules/paper.md` | die Seminararbeit in `spacesim/docs/`: Ordnerrollen, Quellen lesen (Curtis-Seitenversatz, Apollo-OCR), Zitierweise, deutscher Stil, KI-Protokoll |
 
 ## The paper — `spacesim/docs/`
@@ -106,20 +107,22 @@ then `graph.html` / `graph.json`) — for **cross-module** questions; read code
 directly for narrow lookups. **STALE since the 2026-09-03 restructure** —
 re-run `/graphify` first.
 
-## Git — never on your own
+## Git — auto-commit finished work
 
-`spacesim/` is its own repo; `Werk/` is not, so `CLAUDE.md` and
-`.claude/rules/` are tracked by nothing. **Never `commit`, `add`, branch, push,
-stash or reset unless the user asks in that same turn** — inspecting is fine.
+`CLAUDE.md` and `.claude/rules/` sit in the root above the code in `spacesim/`.
+**Commit and push each finished, verified change without asking** (the
+user's standing instruction) to the session's branch — except when the user
+says not to commit yet. Never branch, stash, reset or rewrite history unless
+asked in that same turn; inspecting is fine.
 
 ## Screenshots — "check the screenshot(s)"
 
-They live in `screenshots for debugging/`, named `Screenshot YYYY-MM-DD
-HHMMSS.png`, so **newest = last by name and by mtime**. *Check the
-screenshot(s)* in any wording means go read the newest N (plain singular = 1) —
-the image is not attached (`ls -t "screenshots for debugging" | head -N`). They
-are usually **crops**, so the HUD is often missing and the scale unknown: read
-them for *shape*, and get every number from a measurement instead.
+They live in `screenshots for debugging/` (next to `spacesim/`), named
+`Screenshot YYYY-MM-DD HHMMSS.png`, so **newest = last by name and by mtime**.
+*Check the screenshot(s)* means read the newest N (singular = 1); the image is
+not attached (`ls -t "screenshots for debugging" | head -N`). Usually
+**crops** (HUD missing, scale unknown): read them for *shape*, take every number
+from a measurement. Headless capture in the cloud: `spacesim/TASKS.md` → Screenshots.
 
 ## Invariants — don't break these
 
@@ -135,11 +138,9 @@ them for *shape*, and get every number from a measurement instead.
   stops time warp moving the planets. Never reintroduce a constant-rate or
   Euler variant; that split *was* the bug (see `physics-world.md`).
 - **Scripted orbits are not integrated.** `fixed=True` bodies with an
-  `is_moon_of` parent follow Kepler elements; only the ship and other
-  non-`fixed` bodies go through `update_dynamics`. (There is **no**
-  `world.should_release()` / `MIN_GRAVITY_THRESHOLD` handover, in this tree or
-  any commit checked — `body.released` is `False` in `bodies/body.py:117` and
-  never set `True`. Writing one is new work.)
+  `is_moon_of` parent follow Kepler elements; only the ship (not while
+  `landed`) and other non-`fixed` bodies go through `update_dynamics`. There is
+  **no** `world.should_release()` handover — `body.released` is never `True`.
 - **A prediction curve is CONSUMED, never translated.** The look-ahead belongs
   to the *orbit*, not the moment: `_advance_points_along_curve` drops the
   points whose time has passed and prepends the ship as the new head; nothing
@@ -170,7 +171,7 @@ them for *shape*, and get every number from a measurement instead.
   `ui_wants_mouse` / `ui_wants_keyboard`. `schiffcontrol` and the camera's WASD
   pan **poll** the keyboard, so they must check the flags explicitly — an
   event-level guard is not enough.
-- **No dependency manifest** — a new import goes in the install line *and* `README.md`.
+- **No dependency manifest** — a new import goes in the install line *and* `spacesim/README.md`.
 - **Debug flags exist** — flip them instead of adding `print`s:
   `predictor.debug_moving_sources`, `renderer.debug_predictor`,
   `world.integrator_debug`, `renderer.maneuver_enabled`.
@@ -189,10 +190,11 @@ them for *shape*, and get every number from a measurement instead.
 
 The full key table lives in `.claude/rules/camera-input.md`. The essentials:
 `WASD` pans (**arrow keys drive the ship, not the camera**), `←` `→` rotate,
-`↑` `↓` thrust, `I` `K` `J` `L` orientation hold, `R` / `1` / `2` reference
-frame, `N` / `X` maneuver node / arm burn, `PageUp` `PageDown` sim_dt, `F1` devui.
+`↑` `↓` thrust, `Shift` / `Ctrl` throttle, `I` `K` `J` `L` orientation hold, `R` / `1` / `2` reference
+frame, `N` / `X` maneuver node / arm burn, `.` `,` warp step (pause is the lowest), `PageUp` `PageDown` sim_dt, `Space` pause, `F12` screenshot, `F1` devui.
 
-Warp steps run `1m/s … 1y/s`; those the orbit cannot resolve are greyed out.
+Warp steps run `1s/s … 1y/s` (start: 1s/s); those the orbit cannot resolve are greyed out.
 **Thrust is real-time only** (an armed node drops the warp itself); rotation
 always works. The HUD mirrors every keybind and reads its values back from the
 simulation. Steps and camera rules: `.claude/rules/camera-input.md`.
+The game starts standing on the launch pad (`spaceport.spawn_on_pad`). Touch down under 12 m/s to land (ALT reads `LANDED`), `↑` lifts off; in an atmosphere warp is real time.

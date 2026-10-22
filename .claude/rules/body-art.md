@@ -3,8 +3,21 @@ paths:
   - "spacesim/bodies/style.py"
   - "spacesim/bodies/icon.py"
   - "spacesim/ship/art.py"
+  - "spacesim/ship/builds.py"
   - "spacesim/render/bodies.py"
   - "spacesim/render/ship.py"
+  - "spacesim/render/ship_pixel.py"
+  - "spacesim/render/inset.py"
+  - "spacesim/render/gl/body_inset.frag"
+  - "spacesim/render/gl/ship_inset.frag"
+  - "spacesim/ship/inset_model.py"
+  - "spacesim/render/gl/ship_cell.vert"
+  - "spacesim/render/gl/ship_cell.frag"
+  - "spacesim/render/gl/ship_pixel.frag"
+  - "spacesim/render/gl/ship_plume.vert"
+  - "spacesim/render/gl/ship_plume.frag"
+  - "spacesim/render/gl/ship_glow.frag"
+  - "spacesim/ship/plume.py"
   - "spacesim/render/gl/body_icon.vert"
   - "spacesim/render/gl/body_icon.frag"
   - "spacesim/render/gl/body_surface.vert"
@@ -99,6 +112,47 @@ paths:
 > **incircle** now (`2·A / perimeter`), and §2 checks the whole drawing
 > against the unit circle.
 
+## Three kinds: planet, star, gas giant (2026-10-14)
+
+`build_planet_style(..., kind=)` — `'planet'` is the path above, unchanged;
+`'star'` and `'gas'` are their own builders (`_build_star`, `_build_gas`) on
+the same icosphere, same seed rules, same output tables. The renderer picks
+the kind from `body.is_star` / `body.is_gas` (`config/solar_system.json`,
+both `false` when missing; Sonne / Jupiter, Saturn, Uranus, Neptun set) in
+`_body_style_kind`, and the kind is part of the cache key.
+
+- **Star:** no tiers, figures or rings — those were what made Sonne read as
+  a yellow planet. Nearly opaque fills (0.97) with **per-corner** limb
+  darkening, `I = 1 − 0.62·(1 − μ)`, `μ` the vertex normal's z, so the colour
+  is interpolated across each facet: pale centre, deeper and redder limb.
+  Granulation is restrained: ±7 % light per facet plus hairline facet edges
+  fading toward the limb. A star is always emissive (`_body_light_dir`), and
+  its disc underneath is **not** darkened (`surface_mix = 0`): the facets end
+  just inside the rim, and the darkened disc showed there as a dark ring
+  between disc and corona. The corona is the existing glow of that disc.
+- **Gas giant:** the spin axis lies near the screen plane (tilt ≤ 24°, tip
+  ≤ 22°), otherwise one looks onto a pole and the bands become rings. Band =
+  `floor(latitude·density + phase + fbm·swirl)`: the noise only shifts a facet
+  along latitude, so it shows exactly where it pushes a facet across a band
+  edge, and the bands are quiet between. Three tiers, never two equal
+  neighbours; contours on the band edges, faint grid under, no figures, no
+  great-circle rings.
+
+Both stay inside the unit circle (`§2` style check: max extent 1.0 at
+`fine`) and cost what the planet build costs (2 / 4–5 / 15 ms coarse /
+medium / fine on the worker).
+
+**The marker follows the kind** (`bodies/icon.py::variant_for_kind`): a star
+gets `star` (bright core, ring, 4 or 8 rays to the rim), a gas giant
+`bands` (bright and dim rows alternating in runs of one or two, mirrored
+about the equator, a few cells flipped at band edges). For `bands` the
+renderer halves `body_icon_shade_jitter`: at the full 0.49 three similar
+tiers dissolved into the rosette's speckle. `VARIANTS` (the dev-UI choice
+for solid bodies) is unchanged. Checking an icon needs a zoom where the
+moons are apart: at 1.2e-9 px/m Jupiter's four moons sit on Jupiter and the
+stack looks like noise; at 8e-8 the planet is still an icon and the moons
+are 30+ px away.
+
 - `render/gl/body_surface.{vert,frag}`, `render/gl/body_line.{vert,frag}` — the
   two programs that draw `body_style`'s output. Same uniforms, same lighting
   law; the line pair additionally expands the quad and carries a 0.5 px seam
@@ -107,6 +161,459 @@ paths:
   owns its buffer (`Renderer._upload_body_style`), and the three draw calls
   per body are grid → fills → contours/figures/rings, in that order, because
   alphas add.
+
+## Pixel bodies: a body-local cell grid, composed at native resolution (2026-10-14)
+
+`render/body_pixel.py` (`BodyPixelMixin`) draws every non-ship body in the
+HUD's pixel idiom; `renderer.body_pixel_size = 0` (or a missing shader) falls
+back to the smooth path above, whose shaders are untouched. The style
+geometry is the same; what changed is how it reaches the screen.
+
+**Why not a coarse screen raster.** The first version rasterised all bodies
+into one 1/k-resolution layer and stretched it. It read as "rendered on a low-
+res display and upscaled": the semi-transparent stack (disc, grid, fills at
+~0.5 alpha, contours) was point-sampled into dozens of in-between colours, and
+square cells packed edge to edge are exactly what an upscaled image looks
+like. The rules below are what replaced it; each one fixes a seen failure.
+
+Per body, three passes, then one blit per frame:
+
+1. **Cell pass** (`body_cell_disc.frag` on `body.vert`, `body_cell_fill.frag`
+   on `body_surface.vert`): a small buffer with one texel per cell, blending
+   **off**. Each cell is opaque and writes colour + halftone size (`o_cell`)
+   and an unlit region id + tag (`o_id`: 1.0 drawing / procedural, 0.4
+   ground; no strokes between different tags). The grid hangs on the **body**:
+   centre rounded to whole pixels, cells counted from there, so the body moves
+   in 1-px steps with its orbit line and nothing shimmers while panning.
+2. **Clean pass** (`body_cell_clean.frag`, cell resolution): a cell that
+   matches none of its four neighbours while two of them match each other
+   takes their colour, keeping its own brightness. Tiny figures rasterised to
+   one cell were scattered specks. It is a separate pass because the compose
+   runs per *screen* pixel, k² times per cell.
+3. **Compose** (`body_pixel.frag`, native resolution, window-size
+   premultiplied layer):
+   - **LED cells**: a chamfered square with a 1-px gap. The gap only opens on
+     the lit side (`lit` 0.55 → 0.85) and toward the limb (`dist` 0.80 →
+     0.97); inside the body it takes the cell colour. A gap everywhere laid
+     one screen texture over every body.
+   - **Halftone**: light sets the cell size (full, −2, −4, 1-px dot); the
+     night side keeps dots so the silhouette survives.
+   - **1-px strokes**: on the lit silhouette edge, and between regions only
+     when the region **brightness** differs by more than 0.045 luma *and*
+     both cells carry the same tag. Night-side strokes fade into the grout.
+   - **Outside**: atmosphere dots, a dot-matrix halo; stars add two stepped
+     glow rings (large dots, then smaller ones) before the matrix.
+   - Early discard beyond `max(halo, 1 + 3.5 cells)`, and edge strokes via
+     one function called only on edge pixels. With local arrays and a
+     four-neighbour loop per pixel the compose dominated the cost in
+     software GL.
+
+`_end_body_layer` blits the layer after the FXAA resolve (FXAA would soften
+every stair), then draws the deferred markers.
+
+**Lighting is per cell, not per facet.** `cell_normal()` puts the sphere
+point under each cell centre against the light. Flat-lit facets laid
+triangles of tone over the whole night side. The facets now only carry the
+pattern (region colour).
+
+**Black holes are `u_kind = 3`** with their own cell pass
+(`body_cell_hole.frag`, one light ray per cell) and a cell-based glow in the
+compose — `.claude/rules/blackhole.md`.
+
+**Stars and gas giants are procedural per cell** (`u_kind` in
+`body_cell_disc.frag`), so they have no detail levels and nothing to switch:
+- **Star**: four limb rings from `I = 1 − 0.62(1 − μ)` and a warm ramp of
+  its own (the cool planet shadow step turned the limb olive). Granulation is
+  3D Worley on the sphere (10 grains per radius, lanes one step darker). It
+  is attached to the surface and fades in only once a grain is ≥ 3 cells
+  wide; below that it is noise.
+- **Gas giant**: the same seeded numbers as the vector style
+  (`bodies/style.py::gas_params`: axis, density, phase, swirl, frequency,
+  rotation, tier table from `GAS_BAND_MIN`, three tier colours). The band is
+  `floor(lat·density + phase + fbm·swirl·1.6 + fine)`, where the fine term
+  (cell scale) frays the band edges in whole cells. `_build_gas` uses
+  `gas_params` too, and its output stayed byte-identical (md5 checked). The
+  tier table starts its no-equal-neighbour chain at −12 rather than at the
+  facet minimum, so the pixel bands may differ from the vector bands in
+  which tier a band gets.
+
+**Transitions are crossfades in REAL TIME, never tied to the zoom.** Each body
+keeps a state `(cell k, detail level, art on/off)` in `_body_pixel_states`.
+When the zoom moves the target state across a threshold, old and new are both
+composed: the old at full alpha, the new on top at `smoothstep(t)` (`u_alpha`
+in `body_pixel.frag`, alpha only). `t` advances by `real_dt /
+body_pixel_fade_s` (0.35 s). At rest exactly one state is drawn. Two failed
+versions:
+- **Bayer dissolve over the zoom.** Its midpoint was pure speckle.
+- **Radial wipe over the zoom.** A body at rest inside the blend band kept a
+  visible circle of the higher level, at practically every zoom.
+
+Supporting rules:
+- **Hysteresis** `body_pixel_hysteresis` (×1.06 on every threshold), so a
+  zoom resting on a boundary does not fade back and forth.
+- **A level switches only once its build exists.** Otherwise the body would
+  show the bare ground for the build time.
+- **A capture** (`capture_scale != 1`) draws the target state directly and
+  leaves the window's state alone.
+- **`real_dt = 0` switches immediately.** The GL tests render without a
+  clock, and a transition begun there stayed at `t = 0` forever:
+  `body_style_test` §7 then saw the 200-px art state at 10 px.
+
+Measured with a scripted zoom 250 → 420 px and back, and over the cell
+(70 ↔ 140 px) and art (10 ↔ 30 px) thresholds:
+- **One switch each way.** Down happens later than up, because of the
+  hysteresis.
+- **The fade takes 21 frames** at 60 fps.
+- **Held frames change 0 pixels.**
+
+**The ladder only goes up.** The facet target is `body_pixel_facet_cells ·
+k_big` (4 cells), never the cell size currently in use. Tied to the current
+cell, the target doubled at the 3 → 6 switch and the ladder stepped back a
+level while zooming in. A 400-step sweep from 10 to 3000 px radius now has
+0 back-steps.
+
+Other load-bearing details:
+- **Palette** (`ramp()` in both cell shaders; GLSL has no include, so keep
+  the copies equal). Shadow is cooler and pulled toward HUD ground `#04070c`.
+  Light brightens within its own hue (`c·(1.30, 1.24, 1.10) + 0.10·ink`); a
+  30 % mix toward HUD text turned every highlight grey. Only the day/night
+  step is Bayer-dithered.
+- **Lines of the style are not drawn.** Region strokes replace contours and
+  outlines. Lost on purpose: the faint grid, the great-circle rings and the
+  inner triangle of `nested`.
+- **Grid sizes on one ladder**: `body_pixel_size` 6 and
+  `body_pixel_size_small` 3 design units; `background.pixel_size` is 3.0.
+- **The selected body's lit edge is HUD cyan**, tied to
+  `selection_marker_enabled` (`selection_camera_test` §8).
+- **Uniforms in the cell pass are written via `_put`** (skips names the
+  compiler removed). Each body kind leaves different ones unused, and a
+  plain `prog[...]` raised `KeyError: 'u_tag'`.
+
+Cost (900×700, Erde at 200 px, llvmpipe, `gl.finish()`): about 3.0–3.5 ms
+off, 5.6–7.3 ms on; this machine's noise is ±2 ms between runs.
+
+## The preview box: the selected body in 3D (2026-10-20)
+
+`render/inset.py` (`InsetMixin`) draws the **selected** body into a box left
+under the target block (`config.json` → `inset`: `mode`, `size`, `offset`,
+`pixel`, `spin_deg_per_s`, `axis_tilt_deg`, `sphere_frac`, `star_opacity`,
+`star_speed`, `moons`, `moon_period_s`). A black hole
+shows its ray-traced slant view (`_draw_black_hole_inset_view`); every
+other body a sphere turning about an axis tipped toward the viewer
+(`body_inset.frag`). It is close to the world, not a copy of it:
+
+- **Same numbers per body**: gas bands from `gas_params` with the cell
+  shader's band formula, the star's four limb rings and Worley granulation,
+  and for planets and moons the **fill colours of `build_planet_style`**
+  (coarse), grouped and weighted by area, dark → light, with their area
+  shares as thresholds on a band-like noise (`_inset_planet_tiers`, cached
+  per style key). Not the planet's own colour: Erde's tiers are four blue
+  tones from near-black to pale, and `#4488ff` itself is none of them.
+- **Same light and ramp**: `_body_light_dir` (tilt 0.55) in view space, the
+  four `ramp()` steps, the dithered day/night step and a bright lit rim.
+- **Different on purpose**: a whole turning sphere instead of the fixed
+  face, no LED gaps or halftone, hard 2-design-unit pixels (NEAREST, an FBO
+  at `size / pixel`), its own star field.
+- **The spin runs in REAL time**: in warp a true day would strobe, and in a
+  pause the shape would stand still.
+- **Stars: three drifting layers, dimmed** (`star_opacity` 0.5,
+  `star_speed` 1.6 box px/s for the nearest). Each layer is single hard
+  pixels on its own cell size; far = dense, dim, slow (×0.25), near =
+  sparse, bright, fast (×1.0) — the parallax. They move only with real
+  time. The black hole's sky lies at infinity, so it does not parallax:
+  it turns slowly about the disk axis (`u_star_turn`), and the lensing
+  stays correct.
+- **Moons** (`moons`, `moon_period_s` 24): a body's real moons (stars and
+  black holes show none), up to eight, on its equatorial plane seen at
+  `axis_tilt_deg`, passing behind and in front of the sphere, with a dotted
+  orbit ellipse (front half over the planet). True radii (10–60 body radii)
+  do not fit, so they are spread **logarithmically** over 1.4–2.25 sphere
+  radii: order kept, spacing not. Each starts at its **true** angle around
+  the planet and then runs in real time with Kepler-ratio periods
+  (a^1.5, innermost 24 s, cap 6×). Size `0.42·sqrt(r_moon / r_body)`,
+  floor 1.4 box px, cap 0.25.
+- **The orbit line uses `|f| / |grad f|`**, the true distance to the
+  ellipse. A threshold on the normalised radius was many pixels thick where
+  the flat ellipse runs nearly horizontal and read as hatching.
+- A moon's label names its planet (`MOND VON ERDE`).
+- **The ship** (`ship_inset.frag`, `ship/inset_model.py`, keys `ship_*`):
+  the build's shapes with their resolved colours (so `ship_build_colors`
+  applies) become two maps at 1 unit per texel, colour + tag (fills in
+  paint order, rail/accent strokes as in `build_cells`) and a top height.
+  The height is the silhouette **inflated** (`_inflate`): each point
+  gets the top of the largest ball inside the silhouette that covers it
+  (union of balls on the medial ridge of an exact Euclidean distance
+  transform), so cross-sections are CIRCLES: hull and tanks cylinders,
+  nozzles and nose cones, the ring a torus. Balls wider than
+  `ROUND_RADIUS` (17) are squashed by `(17 / r)^2`, so wings and sails
+  become thin lenses, not domes. The first version stacked flat plates
+  and tubes with a bevel, and read as 2D extruded along z. A fill painted
+  over another lifts softly by `LAYER_LIFT` per layer (blurred). The
+  underside mirrors the top at 0.9. One orthographic ray per pixel, step 1.25 units plus
+  bisection; normals from the height gradient. Ramp,
+  ×1.55 lift, accents emissive as in `ship_cell.frag`; a 1-px seam on the
+  darker side of a colour edge (luma > 0.045).
+  - **No rotation, light does turn**: the view is fixed (`ship_elev_deg`
+    38, `ship_yaw_deg` −26, nose away up-right), and the light is
+    `_body_light_dir` rotated into the ship frame, so turning the ship in
+    the game moves the light in the box (§9: 0 px with light off, ~5600
+    with it).
+  - **Plume**: a glowing cone per `builds.NOZZLES` entry, density ∝
+    `r_nozzle / width` (the same stream spread wider; with constant
+    density the jet started thin and detached from the nozzle), widening
+    with thrust, flowing noise, stepped through `fire()` of
+    `ship_pixel.frag` in the build's accent. The spool is the box's own,
+    with the particle model's time constants (up 0.22 s, down 0.12 s), so
+    it also works with the vector ship style. Warm light on the stern.
+  - **Shake**: a new random offset every 1/30 s, `ship_shake_px · spool`,
+    rounded to whole box pixels; it moves the view only, never the frame.
+  - **Stars stream against the nose**, speed `star_speed · (1 +
+    ship_star_boost · spool)`, **integrated** per frame (speed × time
+    jumped when the throttle moved), with streaks up to `ship_streak_px`.
+  - Cost (llvmpipe, `gl.finish()`): 3.1 ms idle, 3.7 ms at full thrust;
+    Jupiter's sphere 4.4 ms. Model build 19–124 ms per build or colour change
+    (the distance transform is separable; brute force took 150–600 ms).
+- `selection_camera_test.py` sets `inset_mode = "off"`: it pins that a
+  selection changes only marker and label.
+
+## Pixel ship: the same cell grid, rotated content (2026-10-15)
+
+`render/ship_pixel.py` (`ShipPixelMixin`) draws the ship in the body idiom.
+`renderer.ship_pixel_style` is `"halbton"`, `"sprite"` or `"vector"` (the
+vector path below); `renderer.ship_build` picks one of five builds. Same two
+passes as the bodies, minus the window layer (the ship is drawn after the
+FXAA resolve anyway, straight into `_frame_output_fbo`):
+
+1. **Cell pass** (`ship_cell.{vert,frag}`): the fills of
+   `ship/art.py::build_cells` rotated and scaled into a cell buffer, one
+   fragment per cell, blending off, in paint order. `o_cell.a` carries the
+   **light** (not a halftone level), so each style derives its own fill from
+   it. Then the bodies' clean pass, unchanged.
+2. **Compose** (`ship_pixel.frag` on `body_pixel.vert`), `u_style`:
+   `2 halbton` (light → coverage: shrinking square from 4-px cells, ordered
+   dither inside the cell below; dark seams between regions, bright rim on
+   the lit side) and `4 sprite` (dithered ramp over all four steps, selout,
+   1-px outline one step above the ground). Outside the cells the compose
+   reads the **heat buffer** of the particle plume (below). LED, blueprint,
+   signal and three print-screen halftones were built and removed again on
+   request (commit history, 2026-10-15).
+
+**Exhaust particles** (`ship/plume.py`, `ship_plume.{vert,frag}`), pixel
+styles only; the vector path keeps its nested-ellipse plume.
+- **Relative, never in world coordinates.** Particles live in a frame
+  centred on the ship but NOT rotating with it (screen axes, build units).
+  They leave a nozzle (`builds.NOZZLES`, per build) along the current
+  heading, so a turning ship bends its plume; the ship's own motion carries
+  the whole plume.
+- **Heat, not sprites.** Each frame the particles go as points, additively,
+  into an RGBA float16 heat buffer on the ship's cell grid (r = heat, g =
+  cold condensate, b = heat × temperature, a = condensate × smoke tone;
+  points are 7 floats, `'2f 4f 1f'`, in both the ship and the inset VAO). The compose takes the
+  **heat-weighted temperature** of a cell as `b / r`: heat picks the step
+  (brightness, coverage), temperature the hue. Steps (Bayer-dithered):
+  > 1.95, > 1.15, > 0.62, > 0.30, > 0.13, plus a sparse last step > 0.05
+  for the thin outer gas; colours run from deep red (cool) through the
+  accent and orange to yellow with a white to blue-white core (hot). The
+  core comes from particle density. Per-particle heat 0.20–0.34 (an earlier
+  0.9–1.3 turned the whole plume into a white blob).
+- **Vacuum and air are one model with an `ambient` 0..1** (`step(...,
+  ambient, wind)`, `render/ship_pixel.py::_ship_plume_air`). In vacuum
+  (`ambient = 0`, bit-identical to the plume before air existed): **no shock
+  diamonds, no drag** (heat `(1 − t)^1.4`), **no smoke**, only thin cold
+  condensate; the under-expanded jet gets WIDER with thrust
+  (`spread · (0.55 + 1.25 s)`). In air the ambient pressure holds the cone
+  to 30 %, the core runs 1.6× longer with **shock diamonds** spaced
+  `1.3 r / sqrt(p/p0)` (they stretch out of the core while climbing),
+  particles relax to the air flow (`AIR_DRAG_PER_S` 1.1 at sea level) and
+  turn into smoke that swells (`0.4 t + 3.2 t²`) and lives
+  `1 + 0.9 … 3.5` × longer (`u²` tail): with one common lifetime the column
+  ended at a hard edge (smoke per 120 units 41 → 7 within one bin); with the
+  tail it thins 68 → 57 → 32 → 15 → 6 → 2.5 out to ~1200 units, and the
+  shader adds a last, dithered thin-smoke step. `MAX_PARTICLES` is 2400
+  (1257 alive in air, 457 in vacuum; 1400 starved the nozzle);
+  `u_smoke` in `ship_pixel.frag` blends condensate into smoke, and
+  `smoke_color()` shades it in six dithered tones from three sources: a
+  per-particle grey (`shade0`, drawn only in air so the vacuum RNG stream
+  is unchanged; lighter while young) carried as `cold × tone` in the heat
+  buffer's alpha, so the shades move with the gas; sunlight on the
+  billows (density gradient over 2 cells against `u_light.xy`); and
+  density (thick cores darker). Shadows cool, light warm. One flat grey
+  read as a surface: grey tones in the 3 km trail went 105 → 360.
+  `ambient = smoothstep` of `log10(rho / 1.225)` over four decades
+  (`ambient_from_density`): Erde (H 8.5 km) 1.0 at sea level, 0.47 at 41 km, 0 above
+  ~78 km, so the plume widens over the whole ascent and the air top
+  (rho already 1e-6) is no edge. It is eased with τ 0.6 s, and each
+  particle keeps the `amb0` of its emission. **Linear in rho is wrong**: the
+  plume would be a vacuum plume above ~15 km. Density comes from
+  `SurfaceSystem.ambient_density`, set every step even when landed (the drag
+  fields are zeroed on the pad). The wind is `-(v − v_air)` turned into the
+  plume frame and **saturated** at `1.6 × exhaust speed` (scale 250 m/s): the
+  plume is a screen-size model, real airspeed would be thousands of units/s.
+  Dev UI "umgebung erzwingen" / `game_shot.py --plume-ambient` force it.
+  Checked in shots at 3 / 25 / 45 / 80 km over Erde: narrow red jet with a
+  smoke trail along the air flow, then wider, then the full vacuum cone.
+- A hot core of points behind the nozzle, length `r · (1.2 + 5·core)`
+  (× `1 + 0.6·ambient`), is uncovered by the flow front after ignition.
+  **The core follows the flow, not the hull**: each point sits where the
+  gas that left `d / speed` ago is, on the heading of that moment (a 1-s
+  heading history, `_heading_at`). Rigid on the current axis it swung with
+  the ship and stood out of the bent plume as a separate straight beam
+  while turning. Its points are spaced ≤ 0.14 r (up to 40, heat per point
+  scaled by spacing): 7 points left the thin end as a row of dots.
+- **Temperature per particle**: `(0.22 + 0.78 s) · U(0.85, 1.12)` at
+  emission, dropping 55 % over its life. The scatter is what makes the
+  colour live; low thrust also flickers harder (`±(0.10 + 0.22·(1 − s))`).
+  The flicker is a new target every ~0.08 s, approached with τ 0.04 s; a
+  fresh random value per frame strobed at the frame rate.
+  The hull light and the glow follow the spool too: red at low thrust, warm
+  white with a blue touch at full.
+- **Fixed light points on top of the simulation:** a glow at each nozzle
+  and the hot core behind it.
+- **Small nozzles are compensated** (`heat × min(3.2, 15 / r)`): with the
+  same particle count their points covered one cell each, and the Ringschiff
+  and Pfeil plumes stayed red.
+- **Driven by the throttle, through a small engine model** (`PlumeParticles.
+  step(dt, throttle, idle, …)`). The throttle comes from
+  `Renderer._ship_thrust_target(body)`: `body.last_thrust_level` (0..1) while
+  `body.last_thrust_direction` points along the nose. `schiffcontrol.
+  apply_thrust` sets it to key × `throttle` (the HUD lever, written by
+  `Telemetry.set_thrust_level`), the manoeuvre executor to its ramp
+  (`profile.throttle_at`); `runtime/loop.py` clears both every frame.
+  - `spool` follows the throttle (up 0.22 s, down 0.12 s). The velocity
+    change stays immediate (physics); only the flame needs time.
+  - **Each particle keeps the state of its emission**: exhaust speed
+    `speed·(0.40 + 0.60 s)`, cone, size, heat, temperature and lifetime
+    all depend on the spool at that moment. A lever change therefore
+    travels down the plume with the flow (seen in the 100 → 30 % strip: the
+    hot section detaches and drifts out). Measured at 80 frames steady
+    (speed 300): farthest particle 82 → 209 units behind the nozzle,
+    widest 15 → 84 units off the axis, mean temperature 0.33 → 0.72 from
+    20 % to 100 %.
+  - **Flow front**: after ignition it runs out at the exhaust speed and
+    uncovers the hot core point by point.
+  - **Ignition** is a small, slow puff (24 particles); the plume then grows
+    outward with its particles. **Shutdown** only stops the supply: the rest
+    drifts off and cools, and the nozzle glow cools over 0.8 s
+    (`nozzle_temp`). An earlier 70-particle burst at full heat made the
+    plume appear out of nowhere.
+  - Idle is a pilot flame: `rate · idle^2.5` extra particles and a faint
+    nozzle glow.
+  - The glow fades in with `smoothstep(0.12, 0.55, spool)` instead of a
+    switch.
+  - The real-loop check of an armed 300 m/s burn: 61 frames of thrust,
+    spool 0.03 → 0.98 over the burn, 0.41 → 0.03 after cut-off. At the
+    lowest warp (60 sim-s per real s) a 30 m/s burn lasts only ~0.06 s on
+    screen, so short burns show as a brief puff.
+- **The plume lights the hull per cell.** `PlumeParticles.light_sources()`
+  gives up to 8 point lights each frame: one glow per nozzle plus up to four
+  heat-weighted centroids of the particles, bucketed by age (age ≈ distance).
+  `ship_cell.frag` puts each cell centre into that frame and sums
+  `strength · (0.35 + 0.65·max(N·L, 0)) / (1 + d² / 4r²)`, with the lights
+  9 units above the plane so the top of the hull is reached too.
+  **The lights are smoothed over time and do not flicker**: fixed slots
+  (nozzles, then four age buckets), each eased with τ 0.20 s
+  (`LIGHT_TAU_S`), and the bucket lights are gated by `spool / 0.15`, so
+  at idle only the steady nozzle light remains. Every change of `lit`
+  switches halbton pixels; with the per-frame flicker and the raw particle
+  centroids the hull changed 459 px per held frame at idle (halbton,
+  1280×800), now 2.9 (0.2 by more than a faint colour step). The sum is
+  capped at 1.3, adds `0.60 · glow` in a warm mix of the accent to the
+  colour and lifts the light (so halbton coverage grows near the fire). It
+  changes colour only, not the region id, so no seams appear. Bending the
+  plume moves the light with it. Condensate in the compose takes warm light
+  from the heat in its own cell.
+- **Glow per screen pixel.** `ship_glow.frag` blurs the heat buffer in two
+  separable gaussian passes (σ = `ship_plume_glow_radius`, 22 units, in
+  cells) into a LINEAR float texture. Each tap reads between two texels
+  (heat is LINEAR too; the compose still reads it with `texelFetch`), which
+  halves the fetches: thrust frame 3.43 → 2.6–2.9 ms in llvmpipe. The
+  compose samples the glow **bilinearly at every screen pixel** and
+  quantises `0.8 · g` into 0.10 alpha steps with a 1-px Bayer dither (cap
+  0.70): the falloff is smooth, and each pixel is still one of a few hard
+  levels. The colour runs from the accent outward to warm yellow inside and
+  shifts with the spool (dark red at low thrust, toward blue-white at
+  full). Condensate lies over it. The glow runs only once the spool passes
+  0.12 and fades in with `smoothstep(0.12, 0.55, spool)` (at idle it is
+  invisible and would cost two passes and a bigger grid); the reach grows
+  by only 1.5 σ: beyond that it stays below the first step.
+- **Never write `smoothstep(hi, lo, x)`.** GLSL leaves edge0 ≥ edge1
+  undefined; the first rear glow used it.
+- **`GL_POINT_SPRITE` must be on** (`render/pipelines.py`, once at init).
+  `ship_plume.frag` reads `gl_PointCoord`, and `runtime/window.py` requests
+  no profile, so SDL gives a *compatibility* context; there `gl_PointCoord`
+  is only defined with point sprites enabled, otherwise every particle is
+  discarded. llvmpipe got it right without it, NVIDIA 595.71 did not: heat
+  buffer 0 cells at full spool (no plume at all), 587–633 cells with it.
+- The grid reach follows the plume (`extent()`) up to what fits the cell
+  budget at the CURRENT cell size (`_SHIP_CELL_CAP`, at most 1200 units), so
+  a long plume never coarsens the hull; particles fade over the outer 35 %
+  of that reach (`render_points(reach)`, the inset at its 440). The old
+  fixed cap of 320 units cut the smoke in air off at a straight edge; a
+  capture does not step the particles.
+- Tunables: `ship_plume_particles`, `ship_plume_rate` (900/s),
+  `ship_plume_speed` (300 units/s; without drag 340 doubled the length), `ship_plume_life_s` (0.55),
+  `ship_plume_spread` (0.10 rad), `ship_plume_glow` (1.0, 0 = off),
+  `ship_plume_glow_radius` (22 units), also in the dev UI.
+
+**Builds and colours** (`ship/builds.py`): `original` (the mockup),
+`ringschiff`, `pfeil`, `schlepper`, `segler`. Shapes name **colour roles**,
+not hex values (`"cargo_a:2"` = role `cargo_a`, shade 2), and `resolve(build,
+colors)` turns them into `(local points, closed, fill, stroke, width, alpha)`
+with `fill`/`stroke = ((r, g, b), kind)`, kind `accent` / `rail` / `plain`.
+`renderer.ship_build_colors` (config, dev UI "Ship › farben der bauform")
+overrides `DEFAULT_COLORS` per build and role.
+- **One role carries a family of near tones.** Large areas are split into
+  plates; each plate takes `shade(rgb, k)` (±9 % value per step, slightly
+  warmer hue, slightly less saturated). The player sets one colour per role
+  and still gets the variation.
+- **The original stays the mockup.** Its shapes keep hex values; each hex
+  belongs to a role and is recoloured **proportionally** (`hex · new /
+  default`), so the defaults reproduce the mockup exactly.
+- **Every build is 230 units long with its nozzles at x = −98 … −115.** The
+  plume (`ship_pixel.frag`, `art._plume_polygons`) is fixed behind that, and
+  `_ship_length_px` normalises on the length. Stay within |y| ≤ 60 (the
+  compose reach).
+- **Bright defaults wash out.** Cells are lifted ×1.55 before the ramp, so a
+  role above ~#8a… goes near white on the lit side (seen on the first sail).
+- The caches (`_ship_shapes`, vector geometry, cell VBOs) compare a key
+  `(build, sorted colours)`; a dev-UI edit rebuilds on the next frame.
+
+Rules, each from a seen failure:
+- **The ship needs about 36 cells along its length**
+  (`ship_pixel_min_cells`). At the bodies' small cell (3 px, 26 cells) every
+  rotation off the axes turned the silhouette into a blob; at 2 px (39 cells)
+  it holds at every angle. `_ship_cell_size` = min(small body cell,
+  length / min_cells), so 2 px at 1280×800, 3 px at 2560×1440, down to 1 px
+  under the zoom shrink.
+- **The grid is screen-aligned and hangs on the rounded ship centre**, like
+  the bodies; rotation re-rasterises the silhouette, translation moves it in
+  1-px steps.
+- **Every Bayer pattern counts from the ship centre, never from the buffer
+  corner** (`u_anchor` in `ship_pixel.frag`, `u_center / u_cell` in
+  `ship_cell.frag`). The corner moves by whole cells with the plume's
+  `extent()`, which at idle jumps with the random pilot-flame particles;
+  counted from the corner, each jump shifted the whole hull dither by 2 px
+  (half the 4×4 period). Measured with the smoothed lights already in: 19.5
+  (halbton) and 115 (sprite) strongly changed hull px per held idle frame,
+  0.2 and 0.8 after.
+- **Only fills and two kinds of strokes become cells.** Accent strokes
+  become single emissive cells, rail strokes one cell row. The original's
+  struts every 8 units and bulkheads every 10 land on almost every cell and
+  turned radiator and hull into noise.
+- **Tags: 1.0 hull, 0.7 rail, 0.85 accent, tested as a band.** A plain
+  `tag > 0.8` matched the hull, which then drew as flat accent colour with no
+  outline.
+- **The light is steeper than for the bodies** (`z ≥ 0.75`) **plus a 0.40
+  ambient**: from above a flat ship is lit grazing most of the time, and the
+  hull sat entirely in the shadow step.
+- **Line width in the cell pass is 1 cell**, divided by `capture_scale`,
+  because `_set_line_width` multiplies by it.
+
+Cost (1280×800, llvmpipe, `gl.finish()`): vector 0.81 ms; pixel 0.54–0.66 ms
+without particles; with particles, plume light and glow 1.35 ms idle and
+2.6–2.9 ms at full thrust (original / Schlepper, ~470 particles). The Python part is ≤ 0.31 ms (step 0.22 +
+point build 0.09); the rest is the heat pass and the extra texel fetch in
+software GL.
 
 ## Die Marke — `bodies/icon.py`
 
@@ -376,8 +883,9 @@ es sechs Uniform-Schreibvorgänge, der Rest läuft über `_set_uniform`.
   Claude Design mockup `Ship Mockup.dc.html`
   (project `7c1401de-e967-41a5-818a-742e9a6015b3`). The shape lists are kept
   in the mockup's own **SVG coordinates** (y down, viewBox `0 0 300 170`) so
-  they can be diffed against it line by line; `build(accent)` flips them into
-  local ship space (+x = nose, +y up, origin at the visual centre), flattens
+  they can be diffed against it line by line; `builds.resolve()` flips them
+  into local ship space (+x = nose, +y up, origin at the visual centre) and
+  `build(shapes, accent_rgb)` flattens
   the beziers/arcs/dashes, ear-clips every fill into triangles and merges the
   result into ~37 `(mode, rgba, width, start, count)` batches over one shared
   vertex array. Pure numbers — no pygame, no GL, no numba. **Order is the

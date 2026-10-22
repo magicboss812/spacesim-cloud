@@ -130,10 +130,11 @@ paths:
 > `tests/ui_hud_test.py` §11 checks that, and also that the raw font is
 > *not* monospaced — otherwise the section would prove nothing.
   - `ui/text.py` — `TextRenderer`: role-based fonts (`match_font`, or a TTF
-    dropped into `ui/assets/`), label-texture cache with **LRU** eviction **over
-    a pool of retired textures** (see the GL-allocation note in
-    `.claude/rules/rendering.md`), tinted blitting, `defer()`/`flush()` for anything that must land
-    after FXAA.
+    dropped into `ui/assets/`), a label cache with **LRU** eviction whose
+    entries are slots in **one RGBA atlas** (`_ShelfAtlas`), tinted text drawn
+    as instances of the `UIDraw` batch (see the note under `ui/draw.py`).
+    `_blit` (own texquad draw, texture pool) survives only as the fallback for
+    a label larger than the atlas and for a `TextRenderer` without a batch.
 
 > **Der label-cache ist LRU, nicht FIFO — die reihenfolge muss die des
 > ZUGRIFFS sein.** Als reines dict war sie die des EINFÜGENS, und ein treffer
@@ -168,25 +169,47 @@ paths:
     right). A circle is a rect with radius = half the edge,
     a ring is that with a border and no fill, an arc is a ring with the arc
     params. **Draws are batched and instanced** (2026-08-17): `_submit` packs
-    the 33 per-shape floats into an instance buffer; `flush()` issues ONE
+    the 37 per-shape floats (33 + the text slot, zero for shapes) into an
+    instance buffer; `flush()` issues ONE
     instanced draw. Each shape used to be its own draw call with ~14 uniform
     writes — at ~160 calls per HUD frame (48 attitude-ring ticks alone) that
     was the single largest UI cost. Instance order == call order, so blending
-    is unchanged; `TextRenderer._blit` calls `rect_flush` (wired in
-    `UIContext`) before drawing so text still layers exactly by call order.
-    The shader takes per-instance attributes (`i_*` → flat varyings) instead
-    of uniforms; only `u_viewport` remains a uniform.
+    is unchanged. The shader takes per-instance attributes (`i_*` → flat
+    varyings) instead of uniforms; only `u_viewport` and `u_atlas` remain.
+
+> **Text is an INSTANCE of the same batch — the whole HUD is one draw
+> (2026-09-29).** Each label used to be its own texquad draw, and each had to
+> `rect_flush` the batch first to keep the layering: measured ~77 text draws
+> plus ~35 forced flushes per frame. Labels now live in one 2048² atlas
+> (`TextRenderer.attach_batch`, wired in `UIContext`) and `UIDraw.text_quad`
+> queues them as rows with `i_tex = (atlas_x, atlas_y, 1, 0)`; `ui_rect.frag`
+> takes a `texelFetch` branch for those. **Pixel-identical, not approximate**:
+> same integer quad corners (expand 0, no rotation), `gl_FragCoord − origin`
+> is exactly the texel texquad sampled at that pixel centre under NEAREST or
+> LINEAR, and the output is the same `texel * colour`. Measured in one
+> process against the old path (`batch = None`): **0 differing pixels** at
+> 2560×1440 and 1280×800, also with a 200² atlas and a 20-entry cache
+> (36 atlas resets, 5290 evictions); counter-check with text suppressed
+> differs in 10 320 px. GL draws per frame **190 → 80**, uniform writes
+> 261 → 120, `ui_calc` median **4.6 → 3.1 ms** (llvmpipe, 1280×800).
+>
+> Two rules keep it exact. **A slot may not be reused while a queued instance
+> still reads it**: every entry records `UIDraw.serial` when drawn, and
+> `_evict` flushes the batch first if it drops one from the pending batch;
+> an atlas reset (`clear_cache`) always flushes first. And **the atlas bytes
+> are the texquad bytes** — `tostring(..., 'RGBA', True)` written at the slot,
+> row 0 at the bottom, so `texelFetch` reads what texquad read.
 
 > **Filling one instance row is ONE assignment, not thirty-three (2026-08-27).**
 > Every single store into a numpy row is a full ufunc dispatch, and over the
 > ~200 shapes of a HUD frame that was measured as the largest single item
 > inside `_submit`. `UIDraw` keeps a flat view on the same memory
 > (`_instance_flat`, rebuilt in `_ensure_capacity` alongside the array) and
-> writes the 33 floats as one slice assignment — same order, same layout, it
+> writes the 37 floats as one slice assignment — same order, same layout, it
 > must still match `_INSTANCE_FORMAT`. And `flush()` hands the rows straight
 > to `write()` instead of `tobytes()`: rows `0..count` are already contiguous,
 > so the copy bought nothing — **~1.5 MB per frame** at ~200 shapes and the
-> nearly 60 flushes a frame takes.
+> nearly 60 flushes a frame took before text joined the batch.
   - `ui/core.py` — `Rect`, anchor constants, `UIContext`, `Widget`, `UIRoot`
     (hit-testing, hover/press/focus, z-order, `wants_mouse`/`wants_keyboard`).
 
@@ -371,6 +394,10 @@ paths:
 > `UIState.celestial_indices`: a frame sitting on the ship collapses its own
 > orbit to a point.
 
+> **Idle controls are opaque** (`theme.idle_fill`, 0.90): over the daylight
+> sky of the near-surface view the old 0.045 fill left the label floating on
+> light blue. See `.claude/rules/surface.md` → "Lesbarkeit".
+
 > **Hierarchy is carried by type contrast, not colour**: letterspaced 10 px
 > labels against 25–30 px readouts. That is also why the palette below has
 > exactly one meaning per colour — a value can't lean on colour to stand out
@@ -459,22 +486,77 @@ paths:
 > er auf `T+` springt — das ist ein ZUSTAND wie `disabled`, keine fuenfte
 > bedeutungsfarbe.
 
+## HUD visibility — draw-only toggles (`ui/hud/visibility.py`)
+
+`HudVisibility` (built in `runtime/bootstrap.py`, driven by the dev UI's
+"HUD visibility" header and `tools/game_shot.py --hide all|KEY,…`) hides
+HUD elements and the renderer's world overlays for clean figures.
+
+> **Hiding is `Widget.drawn = False`, never `visible = False`.**
+> `Widget.update` skips invisible children, so `visible` would freeze the
+> element. `drawn` is only read by `UIRoot.paint_order`, which drops the
+> whole subtree; `_pick` walks the same list, so a hidden element takes no
+> mouse input, while layout and update still run. The AP/PE block lives
+> inside `NavballCluster`, so it is a flag there (`show_info`, which also
+> carves its rect out of `hit_test`); hiding the navball hides it too.
+> The world overlays are `renderer.draw_apsis_markers`,
+> `draw_body_labels`, `draw_maneuver_markers`: they gate only the drawing,
+> `apsis_marker_hits` / `maneuver_node_hits` are filled every frame. The
+> apsis tooltip is drawn only while the markers are, and the
+> `ManeuverGizmo` (input only) follows `draw_maneuver_markers`. Verified at
+> 2560×1440: `--hide all` leaves world, line and ship only; `--hide navball`
+> removes the cluster and its four tiles, nothing else.
+
 ## Two HUD elements read the renderer instead of the world
 
 `hud/apsis_tooltip.py`, `hud/system_map.py` and `ManeuverGizmo` are the only
 widgets that take their geometry from outside `ui/`, and each for one reason:
 
-- **The apsis tooltip** hangs on the Ap/Pe diamond, whose screen position only
-  `Renderer._draw_apsis_markers` knows — it applies the *time-dependent* frame
-  transform that keeps the marker on the drawn line. The renderer therefore
-  publishes `renderer.apsis_marker_hits` (`sx, sy, radius_px, is_apoapsis,
-  distance_m, t_abs, alpha`, cleared and refilled every call) and the widget
-  hit-tests against it. The tooltip sets `blocks_mouse = False` and picks in
-  `update()` from `ctx.mouse_x/y`: it sits over the world, and a widget that
-  swallowed clicks there would block body selection and camera panning for a
-  pure readout. Its speed comes from `Telemetry.speed_at_radius()` — vis-viva
-  on the same osculating conic AP/PE and the countdowns come from, *not* the
-  predictor's velocity columns (the chord kernels write NaN there).
+- **The apsis tooltip** hangs on the Ap/Pe plaque, whose screen position only
+  `Renderer._draw_apsis_marker_rows` knows — it applies the *time-dependent*
+  frame transform that keeps the marker on the drawn line. The renderer
+  therefore publishes `renderer.apsis_marker_hits` (`sx, sy, radius_px,
+  is_apoapsis, distance_m, t_abs, alpha`, cleared and refilled every call)
+  and `preview_apsis_marker_hits` for the planned orbit (two more fields,
+  `True, v_rel`; `.claude/rules/maneuver.md`), and the widget hit-tests
+  against both. Hovering is picked in `update()` from `ctx.mouse_x/y`, so the
+  tooltip blocks nothing over the world; `hit_test` is true **only on the
+  WARP TO button of a pinned tooltip**. Speed: `Telemetry.speed_at_radius()`
+  (vis-viva on the osculating conic AP/PE come from) for the line, the
+  preview's own `v_rel` for planned markers.
+  Its colour comes from `ui.theme.apsis_rgb(apoapsis, preview)`, the same
+  function the renderer draws the marker with; the copies that used to sit
+  in both files are gone.
+
+  **Pinning goes through the world click, not through the widget.**
+  `InputRouter.handle_world_click` tries `apsis_tooltip.pin_at` first, then
+  the bodies, then `Renderer.pick_prediction_time` → `point_tooltip.pin`.
+  Unpinning is `dismiss()`, which `UIRoot` calls on every widget but the
+  pressed one at each mouse-down — "click anywhere else". A pinned marker is
+  re-found each frame by kind, line/plan and the nearest `t_abs` within
+  `max(120 s, 2 % of its ETA)`; past, or missing for 0.5 s, it closes.
+
+  **Position is re-read at DRAW time** (`_refresh_position`). `update()` runs
+  before `renderer.render()` and sees the previous frame's hits; with the
+  camera following the ship under 1 d/s the whole scene moves a quarter
+  orbit per frame, and the pinned tooltip stood ~180 px beside its marker
+  in the capture. `ui_root.render()` comes after `render()`, so the draw
+  reads this frame's hits.
+
+  **WARP TO** (`runtime/warp_to.py`, rules in `.claude/rules/camera-input.md`)
+  is offered on pinned line markers only, target `t_abs -
+  warp_to.apsis_margin_s`, greyed once that has passed. A press while a warp
+  to the same target runs is a stop: `on_mouse_down` notes it, and the
+  release cancels with `settle=True` (back to 1s/s) instead of restarting.
+- **The point tooltip** (`hud/point_tooltip.py`, subclass) is pinned by a
+  click on the prediction line; hovering the line shows nothing. It stores
+  only a TIME: `renderer.trajectory_pin_t` → `_draw_trajectory_pin` evaluates
+  it on the current line with `state_on_curve`, draws a cyan square with four
+  ticks (not a diamond) and publishes `trajectory_pin_hit = (sx, sy, x, y,
+  vx, vy, t)`. Rows R (centre distance, like AP/PE), REL V, ETA; notch tab
+  `ORBIT.POINT`; WARP TO targets `t - warp_to.point_margin_s` (0). The
+  line pick (`pick_prediction_time`) projects 4000 points without
+  refinement, once per click, nearest segment within 10 design units.
 - **The system map** hangs under the warp bar, whose height follows font size
   and notch tab. Its `layout()` therefore reads the warp widget's
   `rect.bottom` rather than carrying a fixed y offset. Body angles are
@@ -505,6 +587,12 @@ widgets that take their geometry from outside `ui/`, and each for one reason:
 uppercase, letterspaced and hard-rastered (`_build_body_label_font` rounds to
 the same multiple of five as `ui/text.py`). It is the only caption *inside* the
 picture, and in the system grotesque it read as foreign to the surface.
+**The font path is resolved from `spacesim/`** (`ui/assets/ui-display.ttf`,
+two `dirname`s up from `render/text.py`). A missing file falls back to
+`font_small` *silently*, so a wrong path looks like a style choice: after the
+2026-09-03 restructure it pointed at `render/ui/assets/`, and every name drew
+mixed-case in the system font until 2026-10-16. Check a shot after touching
+it: `ERDE` in capitals means the file loaded.
 Consequence for the renderer's cache: `_get_label_texture` keys on
 `(text, id(font), height, antialias, tracking)` — two fonts can report the same
 height, and the old key would have served one font's glyphs under the other's
